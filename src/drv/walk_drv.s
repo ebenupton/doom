@@ -58,8 +58,10 @@ RAWX_MAX = $0A10        ;  2576
 RAWY_MIN = $F9D0        ; -1584 (same WORLD clamp; center moved -3250->-3248)
 RAWY_MAX = $0490        ;  1168
 
-.if ::BANKED                      ; banked only: the flat image is the
-                                  ; tube parasite and ships tubedrv
+; BOTH BUILDS since 2026-09-02 (the flat-first-class purge): the
+; parasite SHIPS the banked walk driver verbatim -- 22K identity is
+; BYTE identity.  It never RUNS on the copro (tubedrv is the driver
+; there), so its HW touches (CRTC, keyboard, T1) are inert bytes.
 
 .import view_setup
 .import render_frame
@@ -118,7 +120,7 @@ tabbase = ROM_DRV_SINCOS_C ; sincos table: 64 x 8 bytes, BANK C (from the
                           ; seeds it; page 6 before reading — 2026-08-17: both
                           ; driver tables left bank A so its bottom 19 pages
                           ; could come free for the main-RAM caches)
-USEVEC  = ROM_DRV_USEVEC_C           ; SPACE use-trace vectors: 64 x 4 (ux,uy s16 raw), bank C
+USEVEC  = ROM_DRV_USEVEC_C           ; SPACE use-trace vectors: 64 x 4 (ux,uy s16 raw), bank A since 2026-09-02
 
 .segment "DRV"
 ; ---------------------------------------------------------------------------
@@ -727,8 +729,9 @@ ri_spdn:
     BNE ri_spdone
     LDA #1
     STA space_prev
-    LDA #BANK_C
-    STA $FE30   ; use vector (bank C)
+    LDA #BANK_SEG
+    STA $FE30   ; USE VECTORS moved to bank A 2026-09-02; ENG_PMOVE_USE
+                ; (next) also pages SEG, so this collapses a ROMSEL
     LDA angidx
     ASL A
     ASL A
@@ -921,4 +924,3 @@ tt:
 clr_end:
 .assert clr_end <= MAIN_BASE, error, "MUST NOT touch the engine CODE region"
 ; (SAVE dropped: the linker emits the image)
-.endif                            ; ::BANKED

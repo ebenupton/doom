@@ -128,13 +128,9 @@ vp_fb1:
    VPLOT_DISPATCH vptab1_hi, vpblk1
 
 .else
-; FLAT = THE TUBE PARASITE (2026-08-30).  It ships no framebuffer and no
-; rasterisers: the copro runs the engine and EMITS draw commands, and the
-; host draws them.  So plot_v is a 3-byte JMP PATCH SLOT here, filled by
-; tube/build_tube_game.py -- which used to poke it after the fact, over a
-; body it had just blind-zeroed.  That surgery is what produced the
-; black screen (see build_tube_game's own comment on the $7500 blob).
-SEG_BANKC                                  ; (parasite re-cut: one segment name)
-::plot_v:
-   JMP $FFFF                               ; PATCHED by the tube builder
+; FLAT = THE TUBE PARASITE.  plot_v IS the resident glue's v-emitter
+; slot (tubedrv SKIPTO &F610: diag/h/v at +0/+3/+6) -- an EQUATE; see
+; plot_axis.s for the whole story.  Segment BANKC carries ZERO
+; parasite-only bytes.
+::plot_v = $F616
 .endif                                     ; ::BANKED

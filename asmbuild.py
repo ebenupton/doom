@@ -68,7 +68,19 @@ def build(asm, banked=0, c02=None, out=None, force=False):
     c02 = int(c02)
     banked = int(banked)
     key = ('engine', banked, c02)
-    if key in _built and _on_disk.get(banked) == c02 and not force:
+    # CROSS-PROCESS variant marker (2026-09-02): the four variants share
+    # output filenames (engine_drv.bin etc.), so "outputs exist" says
+    # nothing about WHICH variant is on disk -- a fresh process reading
+    # them raw got whatever the last build left (the walkdrv_loop wedge:
+    # a C02 driver on an NMOS rig, exposed when the flat purge moved the
+    # variants apart).  The marker names the on-disk variant; a mismatch
+    # forces the relink.
+    _marker = os.path.join(_ROOT, 'build', 'engine_on_disk')
+    try:
+        _disk = open(_marker).read()
+    except OSError:
+        _disk = ''
+    if key in _built and _disk == f'{banked},{c02}' and not force:
         return ''
     # refuse to build with unallocated ZP declarations (name = ?) pending —
     # run tools/zpcheck.py --alloc to assign them
@@ -94,6 +106,8 @@ def build(asm, banked=0, c02=None, out=None, force=False):
                   '--dbgfile', os.path.join(objdir, f'engine_b{banked}c{c02}.dbg')])
     _built.add(key)
     _on_disk[banked] = c02
+    with open(_marker, 'w') as _mf:
+        _mf.write(f'{banked},{c02}')
     return text
 
 

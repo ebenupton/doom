@@ -22,6 +22,13 @@ build_walk_ssd.banked_files() (WALK/BANK0-2/LOW).
 """
 import os, subprocess, sys
 
+# THE COPRO IS A 65C02 -- and span_clip_6502/symmap bind DOOM_CPU at
+# IMPORT time, so it must be set BEFORE any project import or the
+# parasite silently ships the NMOS engine against C02 maps (caught by
+# the pure-concat gate 2026-09-02).  The banked side is immune: its
+# variants build in subprocesses with their own env (_banked_variant).
+os.environ['DOOM_CPU'] = '65c02'
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
@@ -32,7 +39,8 @@ SECTOR = 256
 TOTAL_SECTORS = 800
 SPAWN_X, SPAWN_Y = 1056, -3616
 SPAWN_ANGIDX = 16               # angle byte 64, walk_drv's spawn facing
-DRIVER_HOME = (0xEA00, 0xF800)  # COPROT in the FB region (engine never writes it)
+RESIDENT = 0xF600               # the glue+emitters block: top of memory,
+                                # under the client OS (shipped inside DATA)
 
 
 def write_ssd(files, path):
@@ -115,6 +123,10 @@ def write_tube_syms():
                      # is not a rendering bug but a missing input path.
                      ('T_PMOVE_USE', 'pmove_use'),
                      ('T_PM_UX', 'pm_ux'),
+                     # O toggle (2026-09-02 two-byte mask): the edge-free
+                     # flip body of obj_key -- the copro edge-detects the
+                     # host-shipped level itself
+                     ('T_OK_FLIP', 'ok_flip'),
                      # THE VIEW BLOCK.  tubedrv hand-baked these as &00,
                      # &01, &02, &03, &04, &05..&0A, &9D, &9E -- the zero
                      # page addresses they happened to have.  Zero page is
@@ -215,10 +227,7 @@ def main():
     # opcodes for the NMOS host.
     walk_files = walkbuild.banked_files()
 
-    os.environ['DOOM_CPU'] = '65c02'    # NOW the copro side: it IS a 65C02
-                                        # (3MHz) — the parasite engine
-                                        # assembles with C02=1 (STZ/BRA/
-                                        # ZERO sites live). Host stays NMOS.
+    # (DOOM_CPU='65c02' is set at MODULE TOP now -- import-time binding.)
 
     def fsym(name):
         return symmap.sym(name)          # flat build (banked=0 default)
@@ -229,15 +238,14 @@ def main():
                       dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
     mem = bytearray(r.sc.mpu.memory[0:0x10000])
 
-    # ---- PARASITE PLOT PATCHING (2026-09-02): the flat engine ships
-    # plot_h/plot_v/RASTER_ENTRY as RTS stubs; the emitters are FOLDED
-    # into COPROT at $7B00-$7B20 (in the glue gap).  Poke the three stubs
-    # to JMP them.  (emit.asm is retired -- its body lives in tubedrv.)
-    for name, target in (('RASTER_ENTRY', 0x7B00),
-                         ('plot_h', 0x7B10), ('plot_v', 0x7B20)):
-        a = fsym(name)
-        mem[a] = 0x4C; mem[a+1] = target & 0xFF; mem[a+2] = target >> 8
-        print(f"  poked {name} @ &{a:04X} -> JMP &{target:04X}")
+    # (PLOT PATCHING IS GONE, 2026-09-02 flat-first-class purge: the
+    # parasite's plot_h/plot_v/RASTER_ENTRY are EQUATES to the resident
+    # glue's emitter slots $F613/$F616/$F610 -- the engine tail-calls
+    # the emitters directly.  The model harness plants RTS at those
+    # addresses instead; loading COPRES restores the real bodies.)
+    for name, slot in (('RASTER_ENTRY', 0x10), ('plot_h', 0x13), ('plot_v', 0x16)):
+        assert fsym(name) == RESIDENT + slot, \
+            f'{name} is not the glue slot ${RESIDENT+slot:04X} -- tubedrv moved?'
 
     # ---- anim tables (flat homes $E500/$E600/$E700, inside the DATA
     # span): the harness memory ships WITHOUT them (anim6502_check
@@ -251,10 +259,10 @@ def main():
     # DATA = level + tables (+anim/sincos). The 2026-07-21 map makes both
     # contiguous; the cache block is runtime-only and never shipped.
     import abi as _abi
-    # THE PARASITE LOAD GEOMETRY (2026-09-02): the engine image is
-    # $0F00-$F7FF contiguous; COPROT rides the static $7800-$7BFF gap so
-    # its own CODE/DATA loads never clobber it.  CODE is everything below
-    # the gap, DATA everything above.
+    # THE PARASITE LOAD GEOMETRY (2026-09-02, resident re-cut): CODE is
+    # everything below the $7800-$7BFF hole (the flat VXCACHE X-plane BSS
+    # -- the transient BOOT stub squats it, so neither load may touch it),
+    # DATA everything above, INCLUDING the resident glue at $F600-$F7FF.
     CODE_LO, CODE_HI = _abi.LOW_BASE, 0x7800
     GAP_LO,  GAP_HI  = 0x7800, 0x7C00
     DATA_LO, DATA_HI = 0x7C00, 0xF800
@@ -293,16 +301,40 @@ def main():
     # ---- assemble the programs ----
     detect = asm('tube/detect.asm', 'DETECT')
     hostt = asm('tube/hostg.asm', 'HOSTT')
-    coprot = asm('tube/tubedrv.asm', 'COPROT')   # glue + emitters, $7800
+    # tubedrv SAVEs TWO blocks: COPROT (transient boot stub, *RUN at
+    # $7800) and COPRES (the resident glue+emitters, $F600).  The
+    # resident block ships INSIDE the DATA file, so inject it into the
+    # image BEFORE the loads are cut.
+    subprocess.run([os.path.join(ROOT, 'beebasm'), '-i', 'tube/tubedrv.asm'],
+                   cwd=ROOT, check=True)
+    coprot = open(os.path.join(ROOT, 'COPROT'), 'rb').read()
+    copres = open(os.path.join(ROOT, 'COPRES'), 'rb').read()
+    os.remove(os.path.join(ROOT, 'COPROT'))
+    os.remove(os.path.join(ROOT, 'COPRES'))
+    assert 0xF600 + len(copres) <= 0xF800, 'resident glue reaches the client OS'
+    mem[RESIDENT:RESIDENT + len(copres)] = copres
+    # ---- STAGE the reclaimed-OS pages (2026-09-02): VEXPL_LO/HI ($F800)
+    # and VPTAB ($F900) -- the two documented exceptions to the LINEAR
+    # bank-C map -- live above the OS floor, which the copro's *LOADs
+    # cannot write (they run through the live client OS).  Ship them
+    # STAGED at $7C00-$7DFF (flat VXCACHE Y-plane BSS, zero in the image
+    # and dead until the engine runs); the boot stub copies them up after
+    # its last OS call.
+    assert fsym('VEXPL_LO') == 0xF800, 'stage copy expects VEXPL at $F800'
+    import re as _re2
+    _vf = _re2.search(r'VPTABF:\s*start = \$F900', open('src/engine_flat.cfg').read())
+    assert _vf, 'stage copy expects the VPTABF region at $F900'
+    assert not any(mem[0x7C00:0x7E00]), 'stage window not clear at ship time'
+    mem[0x7C00:0x7E00] = mem[0xF800:0xFA00]
 
     # ---- the ONE dual-mode disc (banked side built above) ----
-    # PHASE4 GATE (2026-09-02): the copro build is structurally COMPLETE
-    # under the parasite map -- COPROT (glue+emitters) at $7800, CODE
-    # $0F00-$77FF, DATA $7C00-$F7FF, sincos seeded, plots patched, disc
-    # assembles.  BUT the py65 copro sim still faults in the emit return
-    # path (esend1 RTS mislands; see project_parasite_map).  Until that's
-    # fixed the disc ships HOST MODES ONLY -- do not ship a crashing copro.
-    PHASE4 = False
+    # PHASE4 LANDED (2026-09-02, resident re-cut): the esend1-misland was
+    # the flat VXCACHE X-planes ($7800-$7BFF) writing over emitters that
+    # lived in their BSS.  The resident glue moved to $F600-$F7FF (top of
+    # memory, inside DATA); only the transient BOOT stub borrows the
+    # X-plane hole; VXCACHE is disabled on the copro (its Y-planes map
+    # onto VDESC/sincos -- see tubedrv.asm).
+    PHASE4 = True
     files = [('!BOOT', 0x30900, 0x30900, detect),
              ('HOSTT', 0x31900, 0x31900, hostt)]
     if PHASE4:

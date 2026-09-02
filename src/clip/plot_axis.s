@@ -65,6 +65,8 @@ plot_bmask:
 ; through STA, so BMI is an always-taken loop-back); write order is
 ; left, right, then middles right-to-left — OR-writes commute.
 .if ::BANKED
+SEG_BANKCHOST                              ; host-only rasteriser body:
+                                           ; region tail (prefix purity)
 plot_h:
 .scope
    LDA RASTER_ZP_Y0
@@ -177,13 +179,14 @@ ph_single:
 ; (plot_v loop body DELETED 2026-07-27: BOTH builds now use the
 ; unrolled-column dispatcher in clip/vplot.s — the flat copy landed in
 ; the recovered $6B00 window. plot_bmask above is its mask table.)
+SEG_BANKC                                  ; back from BANKCHOST
 .else
-; FLAT = THE TUBE PARASITE (2026-08-30).  It ships no framebuffer and no
-; rasterisers: the copro runs the engine and EMITS draw commands, and the
-; host draws them.  So plot_h is a 3-byte JMP PATCH SLOT here, filled by
-; tube/build_tube_game.py -- which used to poke it after the fact, over a
-; body it had just blind-zeroed.  That surgery is what produced the
-; black screen (see build_tube_game's own comment on the $7500 blob).
-::plot_h:
-   JMP $FFFF                               ; PATCHED by the tube builder
+; FLAT = THE TUBE PARASITE.  It ships no framebuffer and no rasterisers:
+; the copro runs the engine and EMITS draw commands, the host draws them.
+; plot_h IS the resident glue's h-emitter slot (tubedrv SKIPTO &F610:
+; diag/h/v at +0/+3/+6) -- an EQUATE, so the engine tail-calls the
+; emitter directly and segment BANKC carries ZERO parasite-only bytes
+; (2026-09-02 flat-first-class purge; the old 3-byte patch slot + the
+; builder's poke are both gone).
+::plot_h = $F613
 .endif                                     ; ::BANKED

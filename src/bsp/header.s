@@ -220,28 +220,26 @@ NF_LLEAF = $40                          ; left child is a subsector
 ; (bbox_visible, bcac_index, the seg_xform vrcache indexers):
 .assert (VRCACHE_BASE & $FF) = 0, error, "VRCACHE_BASE must be page-aligned"
 
+; PAGE emits in BOTH builds since 2026-09-02 (the flat-first-class
+; purge): on the parasite $FE30 is inert copro RAM, so the banked
+; ROMSEL writes are harmless bytes -- and the 22K stays BYTE-identical
+; (every page site used to be a 4-5 byte divergence).
 .macro PAGE bank
-.if ::BANKED
    LDA #bank
    STA $FE30
-.endif
 .endmacro
 
 ; PAGE_X / PAGE_Y: as PAGE but clobber X / Y instead of A — lets a
 ; value RIDE A across a bank switch (flags still die: the immediate
 ; load sets N/Z — compute verdicts AFTER the page, not before).
 .macro PAGE_X bank
-.if ::BANKED
    LDX #bank
    STX $FE30
-.endif
 .endmacro
 
 .macro PAGE_Y bank
-.if ::BANKED
    LDY #bank
    STY $FE30
-.endif
 .endmacro
 
 ; RNS_SELECT — pick the vectored round-to-nearest shifter and patch
@@ -490,18 +488,23 @@ L2_BBOX = ROM_BBOX_C                    ; alias (harness/loader points zp_rom_bb
 ; recip. VDONE = the once-per-frame first-touch bitmap (byte index =
 ; the header key's B byte = idx>>3, bit = vc_bit_mask[idx&7]).
 .if ::BANKED
-VDESC      = $A500                      ; bank C (verticals run under C);
-VEXPL_LO   = $A700                      ; CONT flush against BOT_RECORDS
-VEXPL_HI   = $A780                      ; $9700; clipper may grow to $9680
-VEXPL_CONT = $9800                      ; (guarded in banked_bsp)
+VDESC      = $9E00                      ; bank C (verticals run under C);
+VEXPL_LO   = $A000                      ; bank C COMPACTION 2026-09-02 (Eben's
+VEXPL_HI   = $A080                      ; plan): the upper C block pulled down
+VEXPL_CONT = $9800                      ; to free the $BAC2-$BFFF tail
 .else
-; FLAT: VDESC rides the bank A window hole (with the driver SINCOS);
-; the VEXPL cluster sits in the CBITS data run above the art windows.
-; All python-seeded like their banked twins.
-VDESC      = BANKA_ORG + $2400          ; 455 ids, 2 planes ($7C00-$7DC6)
-VEXPL_LO   = $F500
-VEXPL_HI   = $F580
-VEXPL_CONT = $F600
+; PARASITE (2026-09-02, the flat-first-class purge): bank-C data homes
+; are LINEAR -- flat = banked - $8000 + $D600, one offset for the whole
+; kept run ($8000-$9FFF -> $D600-$F5FF).  The ONE exception: VEXPL_LO/HI
+; (banked $A000) would land on the resident tube glue at $F600, so it
+; lives in the reclaimed client-OS page at $F800 (staged at $7C00 on
+; disc -- the loads run through the live OS -- and boot-copied up).
+; Legit because the copro makes no OS calls post-boot (SEI held, raw
+; FIFO; the host never touches R3/R4 so no NMIs); $FFFA+ vectors intact.
+VDESC      = $F400                      ; linear ($9E00 banked)
+VEXPL_LO   = $F800                      ; THE exception (banked $A000)
+VEXPL_HI   = $F880
+VEXPL_CONT = $EE00                      ; linear ($9800 banked)
 .endif
 ; (VDONE moved next to VRCACHE_VALID 2026-07-26 — see below; $0600 is
 ; fully FREE again.)

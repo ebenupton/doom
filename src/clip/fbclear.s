@@ -31,7 +31,7 @@
 .if ::BANKED
 ; The framebuffer clears are BANKED-ONLY: walk_drv is their only caller
 ; and the flat parasite has no framebuffer to clear (2026-08-30).
-SEG_BANKC
+SEG_BANKCHOST
 
 .macro FB_CLEAR_BODY base
 .local lp
@@ -90,14 +90,12 @@ cb_one:
 .endif
 .else
 ; FLAT = THE TUBE PARASITE: no framebuffer, nothing to clear.  The
-; driver still links against the clear entries (its flip path calls
-; them); they are RTS stubs here and the tube glue owns the real flip
-; protocol.
-SEG_BANKC
-::fb_clr0:
-   RTS
-::fb_clr1:
-   RTS
-::fb_clr_back:
-   RTS
+; driver still LINKS against the clear entries (its flip path calls
+; them) but never RUNS on the copro (tubedrv is the driver there), so
+; all three are EQUATES to the resident glue's pinned RTS slot ($F619,
+; tubedrv SKIPTO &F610 block) -- segment BANKC carries ZERO
+; parasite-only bytes (2026-09-02 flat-first-class purge).
+::fb_clr0 = $F619
+::fb_clr1 = $F619
+::fb_clr_back = $F619
 .endif

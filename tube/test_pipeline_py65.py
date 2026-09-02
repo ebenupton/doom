@@ -10,6 +10,7 @@ Stage 3: the $5800 framebuffer must equal the BANKED build's render of the
 same spawn pose EXACTLY (0 differing bytes)."""
 import os, sys, subprocess
 
+os.environ['DOOM_CPU'] = '65c02'    # BEFORE project imports (import-time binding)
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
@@ -57,7 +58,7 @@ def copro_frame_commands():
     base.subscribe_to_read([0xFEF9], r1d)
     base.subscribe_to_write([0xFEF9], r1w)
     mpu = MPU_C02(memory=base)              # the copro is a 65C02
-    mpu.pc = 0xEA03
+    mpu.pc = 0xF600                      # RESIDENT entry (JMP init)
     mpu.sp = 0xDD
     steps = 0
     while (len(state['out']) < 4 or state['out'][-4:] != [0xFF] * 4) \
@@ -106,11 +107,13 @@ def host_rasterize(cmds):
 
 
 def main():
-    from banked_bsp import limit_objects_legacy
     r = BspRender6502(dw.packed_layout, dw.packed_rom_main,
                       dw.packed_rom_detail, dw.packed_bbox_table,
                       dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
-    limit_objects_legacy(r)          # the tube runs the FLAT 18-object subset
+    # FULL-OBJECT PARITY (2026-09-02): the parasite draws all 52
+    # billboards since phase 2, so the legacy-18 limit is gone; the
+    # reference rig's OBJ_ANYB ships pre-seeded (objects on), and the
+    # copro harness arms ok_state=0 to match.
     px, py, ab = SPAWN
     r.render_frame(px, py, ab, dw.player_floor(px, py))
     # The reference is the BANKED framebuffer (2026-08-29).  It used to be

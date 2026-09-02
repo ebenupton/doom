@@ -7,6 +7,9 @@ the Tube version, gate-style: if it runs N frames cleanly here, any
 on-machine failure is environmental (interrupts/client ROM), not logic."""
 import os, sys, subprocess
 
+os.environ['DOOM_CPU'] = '65c02'    # BEFORE any project import: the rig
+                                    # binds the CPU at import time
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
@@ -30,7 +33,7 @@ USE_DOOR_ANG = 0
 
 
 def build_image():
-    os.environ['DOOM_CPU'] = '65c02'    # parasite build: C02=1 opcodes; the
+    # (env set at module top; the rig below is coherently C02)
     r = BspRender6502(dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,
                       dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y,
                       dw.PRESCALE)
@@ -38,23 +41,28 @@ def build_image():
     import importlib, build_anim_ssd as _anim, anim_sectors as _an, colmap as _cm
     btg = importlib.import_module('build_tube_game')
     btg.write_tube_syms()               # tube_syms.inc from the CURRENT map
-    # THE PARASITE GEOMETRY (2026-09-02): emitters are folded into COPROT
-    # at $7B00; the flat engine's plot_h/plot_v/RASTER_ENTRY are RTS stubs
-    # poked to JMP them.  sincos is engine data at ROM_DRV_SINCOS_C.
+    # THE PARASITE GEOMETRY (2026-09-02, resident re-cut): the glue +
+    # emitters live in the RESIDENT block at $F600-$F7FF (COPRES, shipped
+    # inside DATA); the flat engine's plot_h/plot_v/RASTER_ENTRY are RTS
+    # stubs poked to JMP the fixed emitter slots $F610/$F613/$F616.
+    # sincos is engine data at ROM_DRV_SINCOS_C.
     _an.install_6502_tables(mem, flat=True)   # anim CFG/TABL0/SSMASK
     _cm.install(mem, flat=True)               # collision/use tables
     _sc = _anim.sincos_table()
     _scb = symmap.sym('ROM_DRV_SINCOS_C')
     mem[_scb:_scb + len(_sc)] = _sc
-    for name, target in (('RASTER_ENTRY', 0x7B00),
-                         ('plot_h', 0x7B10), ('plot_v', 0x7B20)):
-        a = symmap.sym(name)
-        mem[a] = 0x4C; mem[a+1] = target & 0xFF; mem[a+2] = target >> 8
+    # (no plot pokes: plot_h/plot_v/RASTER_ENTRY are equates to the
+    # glue's emitter slots; loading COPRES below provides the bodies)
     subprocess.run(['./beebasm', '-i', 'tube/tubedrv.asm'], check=True,
                    capture_output=True)
-    cop = open('COPROT', 'rb').read(); os.remove('COPROT')
-    mem[0x7800:0x7800 + len(cop)] = cop       # COPROT rides the glue gap
-    os.environ['DOOM_CPU'] = ''
+    # OBJECTS ON for the copro (2026-09-02, full-object parity): the
+    # engine default is off (ok_state=1 -> anim_init zeroes OBJ_ANYB);
+    # the parasite carries the FULL 52-billboard set since phase 2, and
+    # the pipeline gate proves it against the banked reference.
+    mem[symmap.sym('ok_state')] = 0
+    res = open('COPRES', 'rb').read(); os.remove('COPRES')
+    os.remove('COPROT')                       # boot stub: not needed here
+    mem[0xF600:0xF600 + len(res)] = res       # RESIDENT at the top of memory
     return mem
 
 
@@ -81,10 +89,17 @@ def main():
         return 0x40
 
     def r1d_read(addr):
+        # TWO-BYTE MASK (2026-09-02): b7=0 movement (keys+fields),
+        # b7=1 buttons (b0 SPACE, b1 O) -- sent only on level change,
+        # like the real host.  One byte per 'vsync' post, as before.
         state['mask_reads'] += 1
         state['avail'] = False
+        want_x = 0x80 | (1 if state.get('space') else 0) | state.get('okey', 0)
+        if want_x != state.get('xsent', 0x80):
+            state['xsent'] = want_x
+            return want_x
         m = MASKS[min(state['frame'], len(MASKS) - 1)]
-        return m | state.get('space', 0)
+        return m
 
     def r1d_write(addr, value):
         state['out'].append(value)
@@ -114,7 +129,7 @@ def main():
     base.subscribe_to_write([0xFEF9], r1d_write)
 
     mpu = MPU(memory=base)
-    mpu.pc = 0x7803                      # harness entry: init + frame loop ($7800+3)
+    mpu.pc = 0xF600                      # harness entry: RESIDENT head (JMP init)
     mpu.sp = 0xDD
     steps = 0
     ring = [0] * 64
@@ -166,6 +181,37 @@ def main():
         print("USE FAIL: SPACE on a door line moved no ceil mover — "
               "the parasite's door-sense path is dead")
     ok = ok and use_ok
+
+    # ---- O: objects toggle over the wire (2026-09-02 two-byte mask) ----
+    # The image booted with objects ON (ok_state=0, harness poke).  Press
+    # O: the host ships the level in the X byte's b1, the copro edge-
+    # detects and JSRs ok_flip -> ok_state flips to 1 (OFF) and OBJ_ANYB
+    # zeroes.  Release, press again: back ON, bitmap refilled.  This is
+    # the ONLY end-to-end coverage of the O plumbing -- without it a
+    # broken wire ships green (the SPACE lesson, again).
+    OKS = symmap.sym('ok_state', banked=0, c02=1)    # the image IS the C02
+    ANYB = symmap.sym('OBJ_ANYB', banked=0, c02=1)   # build; env was reset
+    def run_frames(n):
+        tgt = state['eofs'] + n
+        k = 0
+        while state['eofs'] < tgt and k < 3_000_000 * n:
+            mpu.step(); k += 1
+    o_ok = True
+    for press, want_state, want_bitmap in ((1, 1, 'zero'), (2, 0, 'nonzero')):
+        state['okey'] = 2
+        run_frames(3)
+        state['okey'] = 0
+        run_frames(3)
+        got = base[OKS]
+        bm = any(base[ANYB + i] for i in range(25))
+        bm_ok = (bm is False) if want_bitmap == 'zero' else bm
+        if got != want_state or not bm_ok:
+            o_ok = False
+            print(f"O FAIL: press {press}: ok_state={got} (want {want_state}), "
+                  f"OBJ_ANYB {'nonzero' if bm else 'zero'} (want {want_bitmap})")
+    if o_ok:
+        print("O toggle: PASS (off->zeroed bitmap, on->refilled)")
+    ok = ok and o_ok
 
     # ---- HUD packet ----------------------------------------------------
     # The copro ships its pose every frame so the HOST can draw the HUD

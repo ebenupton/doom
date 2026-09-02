@@ -35,7 +35,7 @@
 ; mask reads IN PLACE from the bank-B page the disc ships — the old
 ; $1100 main copy and anim_init's page copy-down are DELETED, and $1100
 ; is free in BOTH builds (flat reads its own shipped page too).
-ANIM_TABL0  = BANKA_ORG + $3E90         ; bank A: 6 u16 ptrs -> per-mover blocks
+ANIM_TABL0  = BANKA_ORG + $3A00         ; bank A: 6 u16 ptrs -> per-mover blocks (moved $BE90->$BA00 by the 2026-09-02 top-of-A free of 512 B)
 ANIM_CFG    = BANKB_ORG + $3300         ; bank B: 12 B per mover (bounds/speed/waits)
 ANIM_SSMASK = BANKB_ORG + $3400         ; bank B (=WALK): read by the hub under
                                         ; the bank it already holds — zero
@@ -589,7 +589,7 @@ alw_done:
 ; jamb VEXPL patches: u16 addrs of the entry byte holding the MOVING
 ; bound of an in-plane door/lift jamb span (VEXPL_LO or VEXPL_HI slot;
 ; gen_6502_tables). Value = ANIM_VAL, same as the FHCH patches. The
-; targets live in BANK_C banked (VEXPL $A700/$A780) while the list is
+; targets live in BANK_C banked (VEXPL $A100/$A180) while the list is
 ; read from TABL0 under BANK_SEG — so each address is fetched first,
 ; then the write runs under a C excursion.
 alw_vexpl:

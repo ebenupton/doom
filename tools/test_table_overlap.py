@@ -53,6 +53,15 @@ def n_nodes():
     return len(dw.nodes)
 
 
+def _is_bankc_region(name):
+    """A linked region in sideways bank C (the CODE bank): clipper,
+    HUD, and the vplot columns.  Bank B (psi planes) and bank C share
+    the $8000-$BFFF window but are different physical banks, so they
+    never collide -- see the loop that calls this."""
+    return (name.startswith('region:')
+            and ('bankc' in name or 'hud_bk' in name))
+
+
 def tables(flat):
     """Every colmap/anim home, sized from the blob it actually ships.
 
@@ -172,6 +181,16 @@ def main():
         hits = []
         for pn, pa, pl in planes:
             for tn, ta, tl in tables(flat=not banked):
+                # BANKED ONLY: the RC psi planes live in bank B (WALK); a
+                # bank-C linked region at the same window address is a
+                # DIFFERENT physical sideways bank and cannot collide.  The
+                # 2026-09-02 top-of-A free slid VPLOTC down to $AE00, into
+                # the psi window ($A900-$AEFF) it used to sit just above --
+                # a cross-bank coincidence, not an overlap.  Bank-B tables
+                # (idx/colport/...) stay in scope: the COLIDX-at-$AB00 bug
+                # was bank B over bank B and must still be caught.
+                if banked and _is_bankc_region(tn):
+                    continue
                 lo, hi = max(pa, ta), min(pa + pl, ta + tl)
                 if lo < hi:
                     hits.append(f'{pn} (${pa:04X}+{pl}) over {tn} '

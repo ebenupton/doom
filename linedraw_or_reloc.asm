@@ -14,10 +14,13 @@ ORG &7500                       \ flat: above-line (2026-08-09 full sub-22K
                                 \ alignment — $2000-$2BFF is the shared
                                 \ driver reservation now)
 ELSE
-ORG &A800                       \ banked: bank C window home (down a page
-                                \ 2026-08-11: VEXPL_CONT vacated $A800 for
-                                \ the unrolled steep core; budget $A800-
-                                \ $B3FF, VPLOTC above at $B400)
+ORG &A200                       \ banked: bank C window home. MUST equal
+                                \ RASTER_ENTRY (abi.inc / clip/arith.s).
+                                \ $A800 -> $A300 -> $A200 (2026-09-02, two C compactions);
+                                \ budget $A200-$ADFF, VPLOTC above at $AE00.
+                                \ Position-DEPENDENT (absolute self-refs +
+                                \ an internal JMP-indirect core dispatch), so
+                                \ this ORG and RASTER_ENTRY move together.
 ENDIF
 
 ; ZP interface (must match the engine's zp map):
@@ -57,5 +60,5 @@ ENDIF
 IF FLATORG
 SAVE "linedraw_or_flat.bin", &7500, P%
 ELSE
-SAVE "linedraw_or_reloc.bin", &A800, P%
+SAVE "linedraw_or_reloc.bin", &A200, P%
 ENDIF

@@ -481,11 +481,16 @@ USE_TRACE = 60            # SPACE trace length (raw units; DOOM uses 64)
 
 
 # Flat/tube home for the SPACE use-trace vectors.  Banked builds get them
-# from banked_bsp (ROM_DRV_USEVEC_C, bank C); the parasite has no banks, so
-# they ship in the DATA file.  $B800-$B8FF is the tail of the run the
-# vertex-block shrink freed ($B700-$B8FF) whose head the object table uses:
-# all-zero in the shipped image, and clear of NODE_SOA at $B900.
-USEVEC_FLAT = 0xF680                    # parasite CBITS data run (2026-09-02)
+# from banked_bsp (ROM_DRV_USEVEC_C, bank A since the 2026-09-02 eviction);
+# the parasite has no banks, so they ship in the DATA file's CBITS run.
+# BY THE MAP, not a literal: the hardcoded $F680 survived the 512 B
+# parasite slide and colmap kept installing the vectors at the OLD home --
+# which the resident tube glue then occupied, so the copro traced SPACE
+# along emitter code bytes (tube_doors 2026-09-02: movers 2/4/5 dead).
+def _usevec_flat():
+    import symmap as _sm
+    return _sm.sym('ROM_DRV_USEVEC_C', banked=0, c02=1)
+USEVEC_FLAT = _usevec_flat()            # parasite CBITS data run ($F480)
 
 
 def use_vectors():
@@ -662,7 +667,7 @@ def blobs(flat=True):
         # The tube driver's SPACE 'use' needs these; walk_drv reads the
         # bank-C copy banked_bsp seeds, which the parasite cannot page to.
         uv = use_vectors()
-        assert A['usevec'] + len(uv) <= 0xF780, 'USEVEC reaches the FW state'
+        assert A['usevec'] + len(uv) <= 0x7000, 'USEVEC reaches VRCACHE'  # flat $6EFC (bank A laid flat, by construction)
         out[A['usevec']] = uv
     # (the bank-B $A900 / flat $8400 staging emits died 2026-08-18: at
     #  $1A00 the ports ship directly inside LOW / the tube CODE file,
@@ -690,7 +695,7 @@ def blobs(flat=True):
     assert A['colseg'] + len(seg_blob) <= _borg + 0x4000, 'COLSEG overruns the bank top'
     assert A['ss_vz'] + len(m['ss_vz']) <= _borg + 0x0E00, 'SS_VZ overruns its plane'
     assert A['mv_ss_info'] + 8 <= _borg + 0x3200, 'MV_SS lists reach CYMIN'
-    assert A['usetab'] + len(ub) <= _aorg + 0x3E8F, 'USETAB (bank A) reaches TABL0'
+    assert A['usetab'] + len(ub) <= _aorg + 0x3300, 'USETAB (bank A) reaches VWHC'
     assert A['sil'] + 36 <= A['minpass'], \
         'the SIL window packs SIL+MV_MINPASS+MV_SS lists exactly'
     assert A['idx'] + len(idx_blob) <= _borg + 0x3300, \

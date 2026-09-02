@@ -18,17 +18,18 @@ os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
 # (name, banked, flat_or_None_if_same_or_meaningless, comment)
 # THE PARASITE MAP (Eben, 2026-09-01): flat lays the bank images whole —
-# bank A at $5800, bank B at $9800 (22K identical below, bank-C bits
-# above $D800).  Bank-resident homes are ONE offset expressed per-build
+# bank A at $5800, bank B at $9600 (rides bank A's empty top 512 B --
+# the 2026-09-02 top-of-A free), bank-C bits above $D600.  Bank-resident
+# homes are ONE offset expressed per-build
 # via these helpers; the generated literals stay consistent by
 # construction.
-BANKA_FLAT, BANKB_FLAT = 0x5800, 0x9800
+BANKA_FLAT, BANKB_FLAT = 0x5800, 0x9600
 def _A(off): return (0x8000 + off, BANKA_FLAT + off)
 def _B(off): return (0x8000 + off, BANKB_FLAT + off)
 
 ABI = [
     ('BANKA_ORG',      0x8000, BANKA_FLAT, "bank A ('seg group', image L0) org: sideways window banked, laid flat at $5800 on the parasite"),
-    ('BANKB_ORG',      0x8000, BANKB_FLAT, "bank B ('walk group', image L2) org: laid flat at $9800 on the parasite (22K identical below, bank-C bits above $D800)"),
+    ('BANKB_ORG',      0x8000, BANKB_FLAT, "bank B ('walk group', image L2) org: laid flat at $9600 on the parasite (rides bank A's empty top 512 B; bank-C bits above $D600)"),
     ('BANK_L0',        4,      None, 'legacy alias for BANK_SEG (two-bank re-cut 2026-08-13)'),
     ('BANK_SEG',       4,      None, 'sideways bank A: seg headers+DIRs, verts, recips, VYCACHE, TABL0 — held for seg stages 1-4'),
     ('BANK_C',         6,      None, 'sideways bank: clipper + rasteriser + HUD'),
@@ -41,7 +42,7 @@ ABI = [
     # symmap. Only the cfg-anchored region head stays an ABI constant
     # (the driver clear-overlay assert needs it before the engine links).
     ('MAIN_BASE',      0x1A00, None, 'engine CODE region head — $2500 -> $1A00 2026-08-26 (the LOW-RAM CONSOLIDATION: driver $0F00 | PMOVE $1340 | CODE $1A00 = ONE contiguous engine area to $57FF, freeing ~2.9K below the framebuffer). History: engine CODE region head (cfg-anchored; MAIN first). $2A00 -> $2600 2026-08-19: the -$400 window slide that took the pm_frame code out of bank B — strip $1600, window $1A00-$25FF, CODE $2600 with PMB1-4 appended identically in both builds. $2600 -> $2500 2026-08-23: PMOVE+PMH are 1,728 B and stopped at $24FF, leaving the PMOVE region a dead last page; CODE takes it (+256 B) and the window shrinks to $1A00-$24FF. Both cfgs move together — bottom-22K identity.'),
-    ('HUD_ENTRY',      0xA400, None, 'hud_draw (bank C window)'),
+    ('HUD_ENTRY',      0xA100, None, 'hud_draw (bank C window)'),
     # (BCA_WS RETIRED 2026-07-26: the workspace block is gone — the box
     # val[] slots were engine-dead (the classify reads BBP planes; only
     # stale harness pokes touched them) and bca_ab moved to ZP. $1B40-
@@ -124,8 +125,8 @@ ABI = [
     ('PMOVE_BASE',     0x1340, None, 'PMOVE region head (banked cfg anchor; build_anim_ssd asserts driver_end <= this)'),
     ('COL_N_SOLID',    204,    None,   'collision indices >= this are ports (colmap asserts the count; 199 -> 204 2026-08-29: the phase-existential flood adopted s62 + the two-pass colinear merge)'),
     ('PM_TURNREM',     0x0D04, None,   'sub-step rotation fraction, Q8 — carries the frame-rate-compensated turn across frames. Moved into the WORK segment 2026-08-26; the PM_MOMX/Y tombstone slots (and the pm_fuzz stay-zero assert) DIED with the old map.'),
-    ('WALKTAB_BASE',   *_A(0x3E64), 'USETAB + 1 + n_use*11: the walk-over record section (n_walk byte, then 11-byte records — 9 + 2 biased hi-byte y bounds, SAME stride as use records). colmap asserts n_use == 9'),
-    ('USETAB_BASE',    *_A(0x3E00), 'use + walkover line tables (u8 n, n x 9: x1,y1,dx,dy s16 + action); banked home is BANK A since the slide arc — pmove_use pages SEG for the list reads'),
+    ('WALKTAB_BASE',   *_A(0x32E4), 'USETAB + 1 + n_use*11: the walk-over record section (n_walk byte, then 11-byte records — 9 + 2 biased hi-byte y bounds, SAME stride as use records). colmap asserts n_use == 9'),
+    ('USETAB_BASE',    *_A(0x3280), 'use + walkover line tables (u8 n, n x 9: x1,y1,dx,dy s16 + action); banked home is BANK A since the slide arc — pmove_use pages SEG for the list reads'),
     ('SCREEN0',        0x5800, None, 'framebuffer 0 (banked only: the flat/tube build never rasterises — clearers/plotters compiled out)'),
     ('SCREEN1',        0x6C00, None, 'framebuffer 1 (see SCREEN0)'),
 ]

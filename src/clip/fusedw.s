@@ -64,8 +64,8 @@ FW_BASE = $9880                         ; bank C tail (2026-08-25 re-cut:
                                         ; the BANKC region boundary keeps
                                         ; code growth a LINK ERROR.
 .else
-FW_BASE = $F780                         ; parasite CBITS data run (after
-                                        ; USEVEC $F680); runtime state,
+FW_BASE = $EE80                         ; parasite: LINEAR ($9880 banked -
+                                        ; $8000 + $D600); runtime state,
                                         ; never shipped
 .endif
 ; COLD walker bytes only — the hot set was promoted to zero page
@@ -279,13 +279,11 @@ fw_line_interp_a:
 ; fw_cb — the CB trapezoid clip on [zx0, zx1) (dcl_cb_clip transcribed;
 ; cx in zp_cb_cx1/cx2 for dcl_boundary_ix, cy in zp_cb_cy1/cy2).
 ; ============================================================================
-; --- fw_cb + its private helpers: in MAIN, BANKED ONLY (2026-08-27) —
-; JMP-reached, ~1-3 entries/frame; the eviction refills BANKC headroom
-; (its ceiling bit again during this grind).  Main RAM is always mapped
-; under bank-C paging; the JSR/JMPs back into BANKC stay valid.
-.if ::BANKED
+; --- fw_cb + its private helpers: in MAIN (2026-08-27) — JMP-reached,
+; ~1-3 entries/frame; the eviction refills BANKC headroom.  Main RAM is
+; always mapped under bank-C paging; JSR/JMPs back into BANKC stay
+; valid.  BOTH BUILDS since 2026-09-02 (22K byte-identity).
 SEG_HIGH
-.endif
 fw_cb:
 .scope
    LDA #$80                                                               ;#            0.0
@@ -645,9 +643,7 @@ fw_bval_bot:
 fw_bval_const:
    TYA                                                                    ;#            0.0
    RTS                                                                    ;#            0.0
-.if ::BANKED
 SEG_BANKC
-.endif
 
 ; ============================================================================
 ; fw_run_visible — feed a visible piece (cp_v*) to the run.

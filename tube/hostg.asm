@@ -31,6 +31,9 @@ wrl=&66
 wrh=&67
 rdl=&68
 rdh=&69
+xcur=&6A                        \ button LEVELS this field (b0 SPACE,
+                                \ b1 O) -- the two-byte-mask X byte's
+                                \ payload, rebuilt every vsync
 ptr=&6C
 tmpc=&6E
 
@@ -393,14 +396,24 @@ ORG &1900
     ORA #8
     STA mask
 .nk4
-    LDA #&62                    \ SPACE -> b7: DOOM 'use'.  Without it the
-    STA &FE4F                   \ map's DR doors never open on the copro
-    BIT &FE4F                   \ (anim_sectors keeps them "shut until
-    BPL nksp                    \ used"); the lifts self-cycle, which is
-    LDA mask                    \ why only the DOORS looked frozen.
-    ORA #&80
-    STA mask
+    LDA #0                      \ button levels: rebuilt each vsync,
+    STA xcur                    \ shipped only on CHANGE (see .nk5)
+    LDA #&62                    \ SPACE -> X-byte b0: DOOM 'use'.  Without
+    STA &FE4F                   \ it the map's DR doors never open on the
+    BIT &FE4F                   \ copro (anim_sectors keeps them "shut
+    BPL nksp                    \ until used"); the lifts self-cycle,
+    LDA xcur                    \ which is why only the DOORS looked
+    ORA #1                      \ frozen.
+    STA xcur
 .nksp
+    LDA #&36                    \ O -> X-byte b1: billboard objects toggle
+    STA &FE4F                   \ (the copro edge-detects the level and
+    BIT &FE4F                   \ JSRs the engine's ok_flip)
+    BPL nko
+    LDA xcur
+    ORA #2
+    STA xcur
+.nko
     LDA #&54                    \ H: toggle the HUD on the PRESS EDGE only,
     STA &FE4F                   \ so holding it flips exactly once (same
     BIT &FE4F                   \ internal code and debounce as walk_drv)
@@ -426,7 +439,9 @@ ORG &1900
 \ (the T1 drain tick exits at ipop above, so ticks are NOT counted).
 \ The count is fields since the copro last TOOK a byte, so a still-full
 \ register just keeps accumulating.
-\ b7 IS NOW SPACE, so the count has THREE bits and saturates at 7, not 15.
+\ b7 IS THE TAG BIT (0 = movement byte; SPACE moved to the X byte with
+\ the 2026-09-02 two-byte mask), so the count has THREE bits and
+\ saturates at 7, not 15.
 \ That is a real trade and worth stating: the count only exceeds 1 while
 \ the copro is behind, and 7 fields is 140 ms -- below about 7 fps the
 \ count clips and motion slows, exactly as it already does past the
@@ -440,15 +455,29 @@ ORG &1900
     BCS nk5
     INC fields
 .nk5
-    LDA &FEE0                   \ push the mask if there's FIFO room —
-    AND #&40                    \ this byte paces the copro's frame loop
+\ TWO-BYTE MASK (2026-09-02): the R1 latch is 1-deep, so bytes are
+\ TAGGED (b7=0 movement / b7=1 buttons) and buttons ship only when a
+\ level CHANGES -- the movement stream keeps its one-per-field rate
+\ and nothing ever blocks.  A pending button byte takes priority; the
+\ movement byte it displaces just accumulates its field into the next
+\ one (same non-blocking contract as the old still-full case).
+    LDA &FEE0                   \ room in the h->c latch?
+    AND #&40
     BEQ nosend
+    LDA xcur
+    ORA #&80                    \ the X byte as it would ship
+    CMP xsent
+    BEQ sendm                   \ unchanged: send movement instead
+    STA &FEE1                   \ changed: ship the button byte
+    STA xsent
+    JMP nosend                  \ (fields keep accumulating)
+.sendm
     LDA fields
     ASL A
     ASL A
     ASL A
     ASL A
-    ORA mask                    \ b0-3 = keys, b4-7 = elapsed fields
+    ORA mask                    \ b0-3 = keys, b4-6 = elapsed fields, b7=0
     STA &FEE1
     LDA #0
     STA fields                  \ only on a SUCCESSFUL hand-off
@@ -622,6 +651,11 @@ ENDIF
     EQUB 0
 .hudprev
     EQUB 0
+.xsent
+    EQUB 0                      \ last button byte shipped; starts 0 (an
+                                \ impossible X byte -- b7 set on the wire)
+                                \ so the FIRST vsync ships the ground
+                                \ state (&80 all-released) unprompted
 .hudb
     EQUD 0 : EQUD 0 : EQUD 0
 .clearbuf

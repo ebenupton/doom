@@ -49,7 +49,7 @@ ROM_DIRS_C    = BANKA_ORG + $3700       ; DIR planes ship in BOTH banks
                                         ; under bank SEG — one shared
                                         ; CROSS_MAG_DECIDE reads them; the
                                         ; flat map resolves to bank A's copy)
-.assert ROM_DIRS_C + 3*LAY_MAX_DIRS <= BANKA_ORG + $3E90, error, "DIR tables reach TABL0"
+.assert ROM_DIRS_C + 3*LAY_MAX_DIRS <= BANKA_ORG + $3A00, error, "DIR tables reach TABL0"
 ; --- static object (billboard) planes: SoA, one X indexes every field ---
 ; Positions use the SAME page-decomposed encoding as the vertex planes
 ; (u8 offset + page nibble), so an object stages exactly like a vertex.
@@ -155,14 +155,14 @@ OBJ_ART_END     = $FF              ; entry: template finished
 ; and clear of the HUD at $A400: the whole stamp loop runs under the one
 ; PAGE BANK_C the object prologue already does.  SEEDED BY PYTHON
 ; (banked_bsp) — the asserts are the only guard.
-OBJ_ART  = $9C00
-.assert OBJ_ART + 4*LAY_N_OBJ_ART <= $A400, error, "banked art templates reach the bank-C HUD at $A400"
+OBJ_ART  = $9B00
+.assert OBJ_ART + 4*LAY_N_OBJ_ART <= $9E00, error, "banked art templates reach VDESC at $9E00"
 .else
 ; FLAT: the CBITS data block (parasite map): three page-aligned windows
 ; at the top of the bank-C-bits run, below VEXPL/VDESC.  Python-seeded,
 ; like the banked home.
-OBJ_ART  = $F200
-.assert OBJ_ART + 4*LAY_N_OBJ_ART <= $F500, error, "flat art templates reach the VEXPL pages"
+OBJ_ART  = $F100                   ; linear ($9B00 banked - $8000 + $D600)
+.assert OBJ_ART + 4*LAY_N_OBJ_ART <= $F400, error, "flat art templates reach VDESC"
 .endif
 ; (vertex block $800 -> $600 2026-08-11: the 4th plane slot died with
 ;  page decomposition — flat frees $B700-$B7FF, banked frees
@@ -221,17 +221,26 @@ ROM_LV1Y_HI_C = LV1_BASE + $180
 BPAL_BASE = BANKA_ORG + $3D00           ; top of bank A
 ROM_BPAL_BFH_C = BPAL_BASE + $00
 ROM_BPAL_BCH_C = BPAL_BASE + $80
-.assert ROM_BPAL_BCH_C + 128 <= BANKA_ORG + $3E00, error, "BPAL runs into USETAB"
+.assert ROM_BPAL_BCH_C + 128 <= BANKA_ORG + $3E00, error, "BPAL runs into the free bank-A top ($BE00+)"
 ; Driver tables in BANK C (2026-08-17): read only by walk_drv, which pages this
 ; bank for them. They were in bank A until its bottom was wanted for the
 ; main-RAM caches. Banked only — the flat harness runs no driver.
 .if ::BANKED
-ROM_DRV_SINCOS_C = $9900                ; bank C (walk_drv pages for them)
-ROM_DRV_USEVEC_C = $9B00
+ROM_DRV_SINCOS_C = $9900                ; bank C (walk_drv pages for it)
+ROM_DRV_USEVEC_C = $96FC                ; EVICTED to bank A 2026-09-02: the
+                                        ; SPACE use-trace vectors are read
+                                        ; right before ENG_PMOVE_USE (which
+                                        ; pages SEG for USETAB), so bank A is
+                                        ; zero-cost -- one ROMSEL instead of
+                                        ; C-then-SEG.  Fills the 260 B gap
+                                        ; above the seg headers ($96FB).
 .else
-ROM_DRV_SINCOS_C = BANKA_ORG + $2600    ; the bank A window hole ($A400-$A7FF
-                                        ; ships nothing banked): flat $7E00
-ROM_DRV_USEVEC_C = $F680                ; CBITS data run
+ROM_DRV_SINCOS_C = $EF00                ; linear ($9900 banked - $8000 +
+                                        ; $D600); senior page rides $F000
+                                        ; (past the CBITS region edge --
+                                        ; python-seeded, ld65 never sees it)
+ROM_DRV_USEVEC_C = BANKA_ORG + $16FC    ; BY CONSTRUCTION: the banked bank-A
+                                        ; home ($96FC) laid flat = $6EFC
 .endif
 .assert (ROM_BPAL_BFH_C & $FF) = 0, error, "BPAL page must be page-aligned"
 .assert (ROM_SS_FH_C & $FF) = 0, error, "SS height pages must be page-aligned"

@@ -26,6 +26,7 @@ This gates the behaviour, which is what actually shipped broken.
 """
 import math, os, re, sys
 
+os.environ['DOOM_CPU'] = '65c02'    # BEFORE project imports (import-time binding)
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
@@ -68,8 +69,13 @@ def machine(img):
         return 0x40
 
     def r1dr(a):
+        # two-byte mask: button byte on change, else a movement byte
         st['avail'] = False
-        return st['space']
+        want_x = 0x80 | (1 if st['space'] else 0)
+        if want_x != st.get('xsent', 0x80):
+            st['xsent'] = want_x
+            return want_x
+        return 0
 
     def r1dw(a, v):
         st['out'].append(v)
@@ -87,7 +93,7 @@ def machine(img):
     base.subscribe_to_read([0xFEF9], r1dr)
     base.subscribe_to_write([0xFEF9], r1dw)
     mpu = MPU(memory=base)
-    mpu.pc, mpu.sp = 0xEA03, 0xDD
+    mpu.pc, mpu.sp = 0xF600, 0xDD        # RESIDENT entry (JMP init)
 
     def run(frames, cap=8_000_000):
         tgt, n = st['eofs'] + frames, 0

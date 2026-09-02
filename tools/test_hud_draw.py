@@ -33,8 +33,8 @@ from py65.devices.mpu6502 import MPU
 from py65.memory import ObservableMemory
 import symmap, abi
 
-HUD_ORG = 0xA400
-VDESC = 0xA500                 # banked_bsp.py seeds the vertex-span descriptors
+HUD_ORG = symmap.sym('hud_draw', banked=1)          # HUD segment head (was $A400; $A200 after the 2026-09-02 bank-C compaction)
+HUD_CEIL = symmap.sym('RASTER_ENTRY', banked=1)     # next segment above HUD ($A300); HUD must fit its one page below it
 FB = abi.SCREEN0
 
 POSE = {'DV_ANGIDX': 0x3D, 'DV_BACKHI': FB >> 8,
@@ -93,10 +93,10 @@ def one(c02):
     img = open(os.path.join(ROOT, 'bsp_render_hud_bk.bin'), 'rb').read()
     ok = True
 
-    fits = HUD_ORG + len(img) <= VDESC
+    fits = HUD_ORG + len(img) <= HUD_CEIL
     ok = ok and fits
     print(f'  segment ${HUD_ORG:04X}-${HUD_ORG + len(img) - 1:04X} ({len(img)} B), '
-          f'VDESC at ${VDESC:04X}  '
+          f'ceiling ${HUD_CEIL:04X}  '
           f'{"ok" if fits else "*** OVERLAPS -- H will crash ***"}')
 
     for label, base in (('Model B  $C000', abi.HUD_FONT_B),

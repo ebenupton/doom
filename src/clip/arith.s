@@ -483,11 +483,12 @@ REC_VERDICT_BELOW = 2
 ; driver stores the back-buffer page; the Python harness sets it in
 ; flat tests).
 .if ::BANKED
-RASTER_ENTRY = $A800                    ; bank C window (down a page 2026-08-11: unrolled steep)
+RASTER_ENTRY = $A200                    ; bank C, pulled down by the 2026-09-02 C compaction (512 B top-of-A free)
 .else
-RASTER_ENTRY = $F7C0                    ; parasite CBITS data run tail: the
-                                        ; tube glue's emit stubs land here
-                                        ; (the ex-$7500 home is bank A now)
+RASTER_ENTRY = $F610                    ; parasite: the resident tube glue's
+                                        ; DIAG emitter slot (tubedrv SKIPTO
+                                        ; &F610) -- the engine tail-calls the
+                                        ; emitter DIRECTLY, no patching
 .endif
 
 ; === Zero-page workspace ===

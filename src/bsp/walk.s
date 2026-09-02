@@ -501,13 +501,11 @@ rc_s0:
                                         ; branch (serves never read it;
                                         ; bbox entry takes no A)
    JSR bbox_visible                     ; vector-dispatched (zp_bv_entry)
-.if ::BANKED
    BCC r0_far_i                            ; near invisible: far check enters
                                         ; ALREADY L2 (bca exit) — the clone
                                         ; below calls the no-page entry
-.else
-   BCC r0_far                              ; near invisible: skip subtree
-.endif
+                                        ; (BOTH builds since 2026-09-02:
+                                        ; pages are inert on the parasite)
 r0_vis:
 ; (bank WALK held: bbox_visible pages it at entry and its exits never
 ; re-page — the four child-fetch PAGEs died in the two-bank re-cut)
@@ -539,7 +537,6 @@ r0_far_vis:
    LDA NODE_TYPE,X
    ASL A                                   ; N = NF_LLEAF
    JMP rc_descend_far                      ; TAIL call either way
-.if ::BANKED
 r0_far_i:                               ; near-invisible arc ONLY: bank is
    PLA                                  ; L2-proven (bca exit; nothing here
    TAX                                  ; touches banked data), so both the
@@ -555,7 +552,6 @@ r0_far_i:                               ; near-invisible arc ONLY: bank is
    BCC rc_ret
 r0fi_vis:
    JMP r0_far_vis
-.endif
 rc_ret:
    RTS
 
@@ -579,11 +575,7 @@ rc_n1:
    LDA #1                                  ; side store sunk past the serve
    STA zp_bbox_side                        ; branch (mirror)
    JSR bbox_visible
-.if ::BANKED
    BCC r1_far_i                            ; near invisible: L2-proven (mirror)
-.else
-   BCC r1_far
-.endif
 r1_vis:
    LDX zp_node_ch_l
    LDA NODE_CLLO,X                         ; inline LEFT fetch
@@ -610,7 +602,6 @@ r1_far_vis:
    STA zp_node_ch_l
    LDA NODE_TYPE,X                         ; N = NF_RLEAF
    JMP rc_descend_far                      ; TAIL call either way
-.if ::BANKED
 r1_far_i:                               ; near-invisible arc: L2-proven (mirror)
    PLA
    TAX
@@ -625,7 +616,6 @@ r1_far_i:                               ; near-invisible arc: L2-proven (mirror)
    BCC rc_ret1
 r1fi_vis:
    JMP r1_far_vis
-.endif
 rc_ret1:
    RTS
 .endscope

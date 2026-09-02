@@ -1581,9 +1581,11 @@ ok_dn:
    BNE ok_done
    LDA #1
    STA ok_prev
-   LDA ok_state
-   EOR #1
-   STA ok_state
+.global ok_flip
+ok_flip:                                   ; EDGE-FREE flip entry (tube O
+   LDA ok_state                            ; button, 2026-09-02): the copro
+   EOR #1                                  ; edge-detects host-side levels
+   STA ok_state                            ; itself, then JSRs here
    BNE ok_off
    JMP obj_anyb_fill                       ; ON: refill the bitmap (tail-call)
 ok_off:

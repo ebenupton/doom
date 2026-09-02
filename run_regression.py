@@ -77,35 +77,39 @@ run('compare_subsector', ['compare_subsector.py'],
                and re.search(r'TOTAL: \d+/([1-9]\d*) subsectors', o) is not None))
 run('rotcache_check', ['tools/rotcache_check.py'], lambda o: 'PASS' in o and 'MISMATCH' not in o)
 run('vxcache_check', ['tools/vxcache_check.py'], lambda o: 'PASS' in o and 'MISMATCH' not in o)
-# PHASE4-PENDING (parasite re-cut, 2026-09-02): the tube gates exercise
-# the OLD copro protocol (tubedrv @ $EA00, $7500 emitters, $F400 COLPORT
-# INCBIN) which the parasite map replaces.  They return when the tubedrv
-# glue re-cut lands (task #34).  The engine itself is proven converged:
-# flat == banked ORDER-EXACT line streams, objects on (see the commit).
-print('  tube_pipeline: SKIP (PHASE4-PENDING)')
-#run('tube_pipeline', ['tube/test_pipeline_py65.py'], lambda o: 'PIPELINE CONVERGED' in o)
+# PHASE 4 LANDED (2026-09-02): the copro runs the parasite map -- boot
+# stub at $7800 (transient, the VXCACHE X-plane hole), resident glue +
+# emitters at $F600-$F7FF (inside DATA, under the client OS).  All five
+# tube gates run again, at FULL-OBJECT parity (ok_state=0 both sides).
+run('tube_pipeline', ['tube/test_pipeline_py65.py'], lambda o: 'PIPELINE CONVERGED' in o)
 # The copro gate also covers SPACE 'use': DR doors are shut until used, so a
 # parasite with no use path has permanently frozen doors while anim_tick,
 # anim_hub and the mover state machine all look perfect. Nothing else here
 # catches it -- anim6502_check POKES mover state instead of triggering it.
-print('  tube_copro: SKIP (PHASE4-PENDING)')
-#run('tube_copro', ['tube/test_copro_py65.py'], lambda o: 'copro_py65: PASS' in o)
+run('tube_copro', ['tube/test_copro_py65.py'], lambda o: 'copro_py65: PASS' in o)
 # HOSTT's half of the split HUD: the copro ships a pose packet, the host
 # draws the readout. The pipeline gate drives drawcmd directly and never
 # sees the packet, so without this the host half is untested.
-print('  tube_hud: SKIP (PHASE4-PENDING)')
-#run('tube_hud', ['tube/test_hostt_hud.py'], lambda o: 'HOSTT-HUD: PASS' in o)
-print('  tube_doors: SKIP (PHASE4-PENDING)')
-#run('tube_doors', ['tube/test_tube_doors.py'], lambda o: 'TUBEDOORS: PASS' in o)
+run('tube_hud', ['tube/test_hostt_hud.py'], lambda o: 'HOSTT-HUD: PASS' in o)
+run('tube_doors', ['tube/test_tube_doors.py'], lambda o: 'TUBEDOORS: PASS' in o)
 # Multi-POSE tube convergence (walk + turns, FB byte-exact per frame).
 # The pipeline gate above covers ONE pose (spawn); this is the gate that
 # would have caught the 2026-08-25 psi-plane-on-anim-tables spray, which
 # corrupted the copro engine only at non-spawn poses/angles. NOTE its
 # mask model must ride a field count in b4-6 -- a bare key mask moves
 # nothing since pmove (that diet is how the hole opened).
-print('  tube_walk: SKIP (PHASE4-PENDING)')
-#run('tube_walk', ['tube/test_walk_convergence.py'],
-#    lambda o: 'WALK CONVERGENCE: PASS' in o)
+run('tube_walk', ['tube/test_walk_convergence.py'],
+    lambda o: 'WALK CONVERGENCE: PASS' in o)
+# The BOOT STUB itself (arena zero + un-stage copy of the reclaimed-OS
+# 1K): every other tube gate enters at the RESIDENT with loads applied,
+# so the code that actually runs first on hardware had NO coverage.
+run('tube_boot', ['tube/test_boot_stub.py'], lambda o: 'BOOTSTUB: PASS' in o)
+# PURE CONCATENATION (2026-09-02, the flat-first-class purge): the disc's
+# parasite files must be a byte-level concatenation of the banked files
+# up to CLASSIFIED link relocations -- an unexplained byte is a baked
+# address (the gate that caught the flat BPAL header-relative fallback).
+run('parasite_concat', ['tools/test_parasite_concat.py'],
+    lambda o: 'CONCAT: PASS' in o)
 run('table_overlap', ['tools/test_table_overlap.py'],
     lambda o: 'TABLEOVERLAP: PASS' in o)
 run('bare_boot', ['test_bare_boot.py'],

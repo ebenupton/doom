@@ -1100,9 +1100,18 @@ POOL_BDEN   = POOL + $1C0
 .endmacro                         ;  (PMOVE slack went to pm_walkover)
 .macro SEG_BANKC
 .segment "BANKC"                  ; banked: the $8000 bank C window; flat:
-                                  ; the CBITS region $D800+ (parasite map —
+                                  ; the CBITS region $D600+ (parasite map —
                                   ; one segment name, the cfg re-homes it)
 .endmacro
+.macro SEG_BANKCHOST
+.segment "BANKCHOST"              ; HOST-ONLY bank-C machinery (banked
+.endmacro                         ; rasteriser bodies + framebuffer clears):
+                                  ; packs AFTER segment BANKC in the same
+                                  ; region, so the parasite's shipped
+                                  ; clipper is a pure PREFIX of banked's
+                                  ; (single +$5600 relocation -- the
+                                  ; 2026-09-02 flat-first-class purge).
+                                  ; The flat build emits ZERO bytes here.
 
 
 ; --- TRIPWIRE call macro (see layout.inc / tw_check in bsp/header.s) ---

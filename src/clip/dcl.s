@@ -1020,11 +1020,10 @@ dcl_cb_top_done_j:
 ; --- dcl_cb_top_at / dcl_cb_bot_at: boundary value at column Y -------
 ; interp_store's own shortcuts serve the constant/endpoint cases.
 ; In MAIN (BANKC is at its ceiling): JSR-reached cold code, and main
-; RAM is always mapped under the clip's bank-C paging.  BANKED ONLY:
-; the flat CLIP region has the headroom, flat CODE does not.
-.if ::BANKED
+; RAM is always mapped under the clip's bank-C paging.  BOTH BUILDS
+; since 2026-09-02 (the flat-first-class purge): the parasite's CODE
+; carries exactly what banked's does -- 22K identity is BYTE identity.
 SEG_HIGH
-.endif
 dcl_cb_top_at:
    LDX zp_save0
    LDA POOL_TXLO,X
@@ -1049,9 +1048,7 @@ dcl_cb_bot_at:
    STA zp_i_y1
    TYA
    JMP interp_store
-.if ::BANKED
 SEG_BANKC
-.endif
 
 dcl_cb_top_eval:
 ; Evaluate top1, top2 at cx1, cx2 (fast paths first)
@@ -1412,10 +1409,8 @@ dclwb_flush3:
 ; Guards: den == 0 or den > 255 -> return midpoint (cannot occur for
 ; sane pixel-scale inputs); cx2 == cx1 -> return cx1.
 ; In MAIN since 2026-08-27 (BANKC ceiling): JSR-reached, ~5 calls/frame.
-; BANKED ONLY (flat CODE is full; the flat CLIP region is not).
-.if ::BANKED
+; BOTH BUILDS since 2026-09-02 (22K byte-identity).
 SEG_HIGH
-.endif
 ::dcl_boundary_ix:
 ; Crossing column of a line against a span boundary over [cx1, cx2].
 ; CONTRACT (2026-09-02 magnitude re-cut): zp_tmp0 = |d| at the cx1 end,

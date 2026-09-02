@@ -453,16 +453,29 @@ def gen_6502_tables(flat=True):
         A = dict(ssmask=_f('ANIM_SSMASK'), tabl0=_f('ANIM_TABL0'),
                  cfg=_f('ANIM_CFG'), hdr=_f('ROM_SEG_HDR_C'),
                  vex_lo=_f('VEXPL_LO'), vex_hi=_f('VEXPL_HI'),
-                 ss_fh=_f('ROM_SS_FH_C'), ss_ch=_f('ROM_SS_CH_C'))
+                 ss_fh=_f('ROM_SS_FH_C'), ss_ch=_f('ROM_SS_CH_C'),
+                 # BY THE MAP like the banked arm: the header-relative
+                 # fallback shipped BPAL patch pointers at the DEAD $7500
+                 # emitter home -- caught by the pure-concat gate
+                 # 2026-09-02, the same class as the banked broken-doors
+                 # bug this dict's own comment records.
+                 bpal=_f('BPAL_BASE'))
     else:
         # banked ss_fh/ss_ch BY THE MAP (the five SS planes live in bank B
         # since 2026-08-19, no longer header-relative) — today's five
         # stale-literal reds are why this is symmap, not a number
         import symmap as _sm
-        A = dict(ssmask=0xB400, tabl0=0xBE90, cfg=0xB300, hdr=0x8000,
-                 vex_lo=0xA700, vex_hi=0xA780,
-                 ss_fh=_sm.sym('ROM_SS_FH_C', banked=1),
-                 ss_ch=_sm.sym('ROM_SS_CH_C', banked=1),
+        _b = lambda n: _sm.sym(n, banked=1)      # BY THE MAP, no literals:
+        # vex_lo/vex_hi drifted to $A700/$A780 after the 2026-09-02 bank-C
+        # compaction pulled VEXPL down to $A100/$A180 -- and $A700 now sits
+        # INSIDE the rasteriser code, so the jamb patcher was corrupting
+        # RASTER_ENTRY (anim6502_check stack-imbalance crash).  Symbol-driven
+        # now, like the flat branch.
+        A = dict(ssmask=_b('ANIM_SSMASK'), tabl0=_b('ANIM_TABL0'),
+                 cfg=_b('ANIM_CFG'), hdr=_b('ROM_SEG_HDR_C'),
+                 vex_lo=_b('VEXPL_LO'), vex_hi=_b('VEXPL_HI'),
+                 ss_fh=_b('ROM_SS_FH_C'),
+                 ss_ch=_b('ROM_SS_CH_C'),
                  # BPAL is NOT header-relative in the banked map: the
                  # seg-header squeeze moved it to the top of bank A. The
                  # header-relative form silently pointed the mover back-
@@ -487,7 +500,10 @@ def gen_6502_tables(flat=True):
         addr = base0 + 12 + len(blocks)
         _st.pack_into('<H', ptrs, mi * 2, addr)
         # back pair: the PALETTE entry for this seg (private for movers)
-        _bpal_base = A.get('bpal', A['hdr'] + _BPAL_REL)   # flat: hdr-rel
+        _bpal_base = A['bpal']              # BY THE MAP, both builds (the
+                                            # hdr-relative fallback is DEAD:
+                                            # it aimed movers' back-pair
+                                            # patches at freed RAM)
         B = lambda i, k: _bpal_base + (0x80 if k else 0x00) + _bpal_id(i)
         ss_of = _seg_ss()
         solid = lambda i: dw.fp_segs_vwh[i][2] is None

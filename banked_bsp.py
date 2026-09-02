@@ -22,10 +22,11 @@ from bsp_render_6502 import BspRender6502
 
 import abi
 BANK_L0, BANK_C, BANK_L2 = abi.BANK_L0, abi.BANK_C, abi.BANK_L2
-abi_RASTER_ENTRY_BANKED = 0xA800     # clip/arith.s, banked arm
 FHCH_LOW = 0x2400
-RASTER_OFF = 0xA800            # rasteriser window addr in bank C
-RASTER_BUDGET = 0x0C00         # $A800-$B3FF (VPLOTC at $B400)
+from symmap import sym as _rsym
+abi_RASTER_ENTRY_BANKED = _rsym('RASTER_ENTRY', banked=1)  # clip/arith.s banked arm; was hardcoded $A800 pre-compaction
+RASTER_OFF = abi_RASTER_ENTRY_BANKED           # bank C, pulled to $A300 by the
+RASTER_BUDGET = 0x0C00                          # 2026-09-02 C compaction
 
 
 def _w16(mem, addr, val):
@@ -88,8 +89,8 @@ def build_banked(flatr):
     # STEPTAB went with them — DELETED, it had no reader in either language
     # after the single-step momentum rework replaced stepping with arithmetic.
     import colmap as _cm
-    _ut = _cm.blobs(flat=False)[0xBE00]                 # USETAB (bank A —
-    la[0x3E00:0x3E00 + len(_ut)] = _ut                  # seed BEFORE
+    _ut = _cm.blobs(flat=False)[abi.USETAB_BASE]        # USETAB (bank A —
+    la[abi.USETAB_BASE-0x8000:abi.USETAB_BASE-0x8000 + len(_ut)] = _ut  # seed BEFORE
                                                         # define_bank COPIES)
     vlen = off_hdr - off_verts
     la[bdst('ROM_VERTS_C'):bdst('ROM_VERTS_C') + vlen] = bytes(rom_main[off_verts:off_hdr])
@@ -110,7 +111,7 @@ def build_banked(flatr):
     if dw.ANIM_SECTORS:
         import anim_sectors as _an0
         for addr, blob in _an0.gen_6502_tables(flat=False).items():
-            if 0xBE90 <= addr < 0xC000:           # TABL0 @ $BE90 (bank A)
+            if 0xBA00 <= addr < 0xBB00:           # TABL0 @ $BA00 (bank A, moved 2026-09-02)
                 la[addr - 0x8000:addr - 0x8000 + len(blob)] = blob
             # (SSMASK no longer routed here: its blob is keyed at its
             #  bank-B home $B400 and seeded in the L2 section below)
@@ -119,6 +120,15 @@ def build_banked(flatr):
     la[0x3900:0x3980] = bytes(rom_main[layout['off_bktlo']:layout['off_bktlo'] + 128])
     la[0x3980:0x3A00] = bytes(rom_main[layout['off_bkthi']:layout['off_bkthi'] + 128])
     la[0x3880:0x3900] = bytes(rom_main[layout['off_dbound']:layout['off_dbound'] + 128])
+    # USE VECTORS -> bank A $96FC (EVICTED from bank C 2026-09-02): read under
+    # SEG right before ENG_PMOVE_USE pages SEG for USETAB, so bank A is zero-
+    # cost.  Fills the 260 B gap above the seg headers.  Seeded here, before
+    # define_bank COPIES la.
+    import colmap as _cm_uv
+    _uvb = _cm_uv.use_vectors()
+    _uvd = bdst('ROM_DRV_USEVEC_C')
+    assert _uvd + len(_uvb) <= 0x1800, 'USEVEC runs into VCACHE @ $9800'
+    la[_uvd:_uvd + len(_uvb)] = _uvb
     bm.define_bank(BANK_L0, la)                   # BANK_L0 == BANK_SEG (4)
     # post-define content gate (2026-08-28): the dead-write class above is
     # silent — verify the planes actually live in the defined bank.
@@ -133,10 +143,10 @@ def build_banked(flatr):
     clip = open('span_clip_bankc.bin', 'rb').read()
     c[:len(clip)] = clip
     rast = open('linedraw_or_reloc.bin', 'rb').read()      # ORG $A800
-    assert len(rast) <= RASTER_BUDGET, f'rasteriser {len(rast)} bytes overruns VPLOTC at $B400'
+    assert len(rast) <= RASTER_BUDGET, f'rasteriser {len(rast)} bytes overruns VPLOTC at $AE00'
     roff = RASTER_OFF - 0x8000
     c[roff:roff + len(rast)] = rast
-    # VXCACHE fat paths -> bank C @ $A300 (planes are BSS at $9700-$A2D3; the
+    # VXCACHE fat-path planes are BSS at $9700-$A2D3, directly below the raster code @ $A300 (the
     # clipper must stay below $9700 — guarded here). Must be seeded BEFORE
     # define_bank: it COPIES the image into a fresh buffer.
     assert len(clip) <= 0x1800, f'clipper {len(clip)} bytes reaches VEXPL_CONT at $9800'
@@ -147,11 +157,13 @@ def build_banked(flatr):
     import colmap as _cm0
     from build_anim_ssd import sincos_table as _sct
     from symmap import sym as _csym
-    for _nm, _blob in (('ROM_DRV_SINCOS_C', _sct()),
-                       ('ROM_DRV_USEVEC_C', _cm0.use_vectors())):
-        _d = _csym(_nm, banked=1) - 0x8000
-        assert _d + len(_blob) <= 0x2400, f'{_nm} runs into the records arenas'
-        c[_d:_d + len(_blob)] = _blob
+    # sincos: bank C $9900 (walk_drv pages C once/frame for it)
+    _scd = _csym('ROM_DRV_SINCOS_C', banked=1) - 0x8000
+    _scb = _sct()
+    assert _scd + len(_scb) <= 0x2400, 'sincos runs into the records arenas'
+    c[_scd:_scd + len(_scb)] = _scb
+    # USE VECTORS seeded into bank A (la) BEFORE define_bank(BANK_L0) -- see
+    # the bank-A section above.
     # Billboard art templates -> BANK C (2026-08-29), abutting USEVEC.  They
     # lived with the level data in bank A, which made obj_stamp page BANK_SEG
     # for four art bytes and BANK_C to draw, EVERY template line: 22.4 ROMSEL
@@ -162,9 +174,9 @@ def build_banked(flatr):
     _art_off = layout['off_obj_art']
     _art_n = layout['art_len']              # all three windows (652 B)
     _art_d = _csym('OBJ_ART', banked=1) - 0x8000
-    assert _art_d == 0x1C00, f'OBJ_ART banked home moved to ${_art_d + 0x8000:04X}'
-    assert _art_d >= 0x1B00 + 256, 'object art overlaps the driver use vectors'
-    assert _art_d + _art_n <= 0x2400, 'object art runs into the bank-C HUD'
+    assert _art_d == 0x1B00, f'OBJ_ART banked home moved to ${_art_d + 0x8000:04X}'
+    assert _art_d >= 0x1B00, 'object art overlaps the driver sincos ($9900-$9AFF)'
+    assert _art_d + _art_n <= 0x1E00, 'object art runs into VDESC @ $9E00 (bank-C compaction)'
     # window alignment is LOAD-BEARING: the walker's four abs,X reads only
     # stay carry-free because every window head is 256-aligned
     assert _art_d % 256 == 0, 'OBJ_ART windows must be page-aligned'
@@ -173,24 +185,24 @@ def build_banked(flatr):
     # (VXCACHE_CODE moved to main $2B00 2026-07-10 — loads via the generic region loop)
     if os.path.exists('bsp_render_hud_bk.bin'):
         hud = open('bsp_render_hud_bk.bin', 'rb').read()
-        c[0x2400:0x2400 + len(hud)] = hud   # debug HUD @ $A400
+        c[_csym('HUD_ENTRY', banked=1)-0x8000 : _csym('HUD_ENTRY', banked=1)-0x8000 + len(hud)] = hud
     # vertex-span descriptor tables (banked homes: bank C $B200/$B400 —
     # the verticals section runs under C, zero paging on the code path)
     for i, d in enumerate(dw.vspan_desc):
-        c[0x2500 + i] = d                # VDESC @ $A500 (moved 2026-07-27)
+        c[(_csym('VDESC', banked=1)-0x8000) + i] = d   # VDESC (moved by C compaction)
     assert len(dw.vspan_expl) <= 0x80, \
         f'{len(dw.vspan_expl)} explicit vspan entries overrun the 128-slot split'
     for i, (lo, hi, cont) in enumerate(dw.vspan_expl):
         _lo, _hi, _ct = dw.vexpl_bytes(i, lo, hi, cont)   # H2 half-baking
-        c[0x2700 + i] = _lo              # VEXPL @ $A700/$A780 (+cont $9600;
-        c[0x2780 + i] = _hi              #  HI split widened 2026-08-14)
+        c[(_csym('VEXPL_LO', banked=1)-0x8000) + i] = _lo   # VEXPL (C compaction)
+        c[(_csym('VEXPL_HI', banked=1)-0x8000) + i] = _hi
         c[0x1800 + i] = _ct                # VEXPL_CONT @ $9800 (moved off
         #  the page head 2026-08-22 to give the clipper its ceiling back;
         #  128 slots end $96FF, flush against BOT_RECORDS $9700)
     # unrolled vertical plot columns + tables ($B200-$BFFF, cfg VPLOTC)
     vp = open('engine_vplot_bankc.bin', 'rb').read()
     assert len(vp) <= 0x0C00, f'vplot {len(vp)} bytes overruns bank C'
-    c[0x3400:0x3400 + len(vp)] = vp   # VPLOTC @ $B400 (2026-08-11)
+    c[0x2E00:0x2E00 + len(vp)] = vp   # VPLOTC @ $AE00 (top-of-A free 2026-09-02; must match cfg VPLOTC-$8000)
     bm.define_bank(BANK_C, c)
 
     # (FHCH moved into bank L0 2026-07-10 — level data out of main, $2400-$33xx freed for code)
@@ -269,7 +281,7 @@ def build_banked(flatr):
     # blobs to lb and banked SPACE read TABL0-neighborhood garbage (the
     # 2026-08-14 'again' investigation's real find).
     for _ca, _cb in _cm.blobs(flat=False).items():
-        if not isinstance(_ca, int) or _ca == 0xBE00:   # USETAB seeded in
+        if not isinstance(_ca, int) or _ca == abi.USETAB_BASE:   # USETAB seeded in
             continue                                    # the LA section
         if _ca < 0x8000:                                # COLPORT etc: MAIN
             for _k, _v in enumerate(_cb):               # (model RAM; discs
@@ -289,6 +301,13 @@ def build_banked(flatr):
     # garbage and the disc hung at boot). Skip the clipper bank (loaded into
     # BANK_C above, not main RAM).
     from engine_load import _regions
+    # BUILD FIRST (2026-09-02): these files are read RAW, and the four
+    # build variants share their names -- without this, the rig loaded
+    # whatever variant a previous build left (the C02-driver-on-NMOS-rig
+    # wedge).  asmbuild's on-disk marker makes this a no-op when the
+    # right variant is already there.
+    import asmbuild as _ab
+    _ab.build('engine', banked=1, c02=_ab.env_c02())
     for addr, fn in _regions(banked=1):
         if fn.startswith('span_clip') or fn == 'bsp_render_hud_bk.bin':
             continue    # clipper + HUD -> BANK_C (rc/anim/vxcache/sel are main now)
@@ -373,7 +392,7 @@ class BankedBspRender(BspRender6502):
         # The plot entries are the only symbols the rig traps that MOVE
         # between builds -- everything else it names is zp or pool, and
         # $0000-$57FF is identical in both maps by rule.  Banked they live
-        # in bank C (plot_h/plot_v in VPLOTC, RASTER_ENTRY at $A800).
+        # in bank C (plot_h/plot_v in VPLOTC, RASTER_ENTRY at $A300).
         for _n, _s in (('ENTRY_INIT', 'span_init'),
                        ('ENTRY_MARK_SOLID', 'span_mark_solid'),
                        ('ENTRY_HAS_GAP', 'span_has_gap'),

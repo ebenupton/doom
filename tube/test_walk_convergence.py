@@ -19,6 +19,7 @@ in python and checks the driver's position/angle vars every frame.
 import math
 import os, sys, subprocess
 
+os.environ['DOOM_CPU'] = '65c02'    # BEFORE project imports (import-time binding)
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
@@ -129,7 +130,7 @@ def copro_walk():
     base.subscribe_to_read([0xFEF9], r1d)
     base.subscribe_to_write([0xFEF9], r1w)
     mpu = MPU_C02(memory=base)              # the copro is a 65C02
-    mpu.pc = 0xEA03
+    mpu.pc = 0xF600                      # RESIDENT entry (JMP init)
     mpu.sp = 0xDD
     steps = 0
     while len(st['frames']) < FRAMES and steps < 3_000_000 * FRAMES:
@@ -185,8 +186,10 @@ class BankedRef:
         self.r = BankedBspRender(dw.packed_layout, dw.packed_rom_main,
                                  dw.packed_rom_detail, dw.packed_bbox_table,
                                  dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
-        from banked_bsp import limit_objects_legacy
-        limit_objects_legacy(self.r)     # the tube runs the FLAT 18-object subset
+        # FULL-OBJECT PARITY (2026-09-02): the parasite draws all 52
+        # billboards since phase 2, so the legacy-18 limit is gone; both
+        # sides arm ok_state=0 so anim_init FILLS the bitmap instead of
+        # zeroing it (objects default off).
         self.m = self.r.sc.mpu.memory
         self.m[0x70] = 0x58
         self.entries = [symmap.sym('anim_tick', banked=1),
@@ -196,6 +199,7 @@ class BankedRef:
         import anim_sectors as an           # real CFG/TABL0/SSMASK — the
         an.install_6502_tables(self.m, flat=False)  # copro image carries them
         self.m[symmap.sym('ANIM_ENABLE', banked=1)] = 1   # so movers animate
+        self.m[symmap.sym('ok_state', banked=1)] = 0      # objects ON (parity)
         self._call(symmap.sym('anim_init', banked=1))     # on both sides
 
     def _call(self, e):
