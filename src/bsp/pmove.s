@@ -947,8 +947,8 @@ pm_pp     = PM_SCRATCH+$75              ; projection scalar
 pm_wu     = PM_SCRATCH+$77              ; unit: cmag,cneg,smag,sneg
 pm_vx     = PM_SCRATCH+$7B              ; project vector in/out
 pm_vy     = PM_SCRATCH+$7D
-pm_p1     = PM_SCRATCH+$7F              ; D_FWD product 1 (24-bit)
-pm_p1s    = PM_SCRATCH+$82              ;  + its sign
+                                        ; (PM_SCRATCH+$7F..+$82 FREE: the
+                                        ;  D_FWD cross products died 2026-09-03)
 pm_axu    = PM_SCRATCH+$83              ; split |fd| work
 pm_ayu    = PM_SCRATCH+$85
 pm_sv     = PM_SCRATCH+$87              ; fallback stash
@@ -979,10 +979,12 @@ pmt_c0s   = PM_SCRATCH+$9E              ; staged c0 across the key check
 ; the $5600-$57FF tail and the old literals STOMPED SHL5 on every move —
 ; sparse indexed writes at $57E5/E6/E9/EC, invisible to ld65 (baked
 ; equates) and to the zero-RAM harness (the corpus never moves).  The
-; jsbeeb spawn artefacts + broken movement.  $0ED0-$0EFF is the WORK
-; arena free run, both builds; sqr_fill_cold zeroes it (the block used
-; to ship as LOW-tail zeros — junk-RAM boots need the explicit clear).
-PMT_BLK   = $0ED0
+; jsbeeb spawn artefacts + broken movement.  LINKER-ALLOCATED since
+; 2026-09-02 (zp.inc pmt_blk): the baked-$0ED0 form sat in what was
+; then the WORK free tail, and the obj_Y growth slid the pose-fraction
+; bytes under it.  sqr_fill_cold still zeroes it (junk-RAM boots).
+.global pmt_blk                         ; (bsp unit: import from zp.inc's WORK block)
+PMT_BLK   = pmt_blk
 pmt_sv    = PMT_BLK+$0                  ; <=4 surviving collision idxes
 pm_svx    = PMT_BLK+$4                       ; replay cursor (X across testers)
 pm_stmv   = PMT_BLK+$5                       ; staged ss class this zonly (1 =
@@ -1101,7 +1103,7 @@ pf_thr:
    STA pm_ax+1
    LDA pm_wu,X
    STA pm_umag
-   JSR pmf_sc16                         ; (speed*mag)>>5 — pm_ax positive
+   JSR pmf_sc16                         ; (speed*mag)>>8 — pm_ax positive
    LDA pm_wu+1,X
    EOR pm_bk                            ; sign = unitneg XOR back
    AND #1
@@ -1298,9 +1300,15 @@ PF_TURN_H:
 .endscope
 
 ; ============================================================================
-; D_FWD — clean commit AND intended move EXACTLY on the view ray
-; (cross == 0 as 24-bit magnitude products + signs, dot > 0). See the
-; model for why exact: friction drift has no epsilon budget in bca.
+; D_FWD — clean commit AND the move points FORWARD along the view unit.
+; The cross-product exactness test died 2026-09-03: it dated from the
+; momentum model (friction drift could deflect the move off the ray).
+; With momentum retired the intended move IS sc16(unit) by construction;
+; the only deviation is the >>8 truncation, <= 1 count per axis, at most
+; 0.37 deg = 0.82 screen columns at a 1-field step — inside dbox_check's
+; +-4-column focus-of-expansion guard band.  The old test rejected the
+; residue on 80% of (heading, fields) cases, leaving the forward cache
+; dormant off the cardinal/diagonal headings.
 ; ============================================================================
 SEG_PMB2
 .scope
@@ -1320,47 +1328,6 @@ df_go:
 df_compute:
    LDA DV_ANGIDX
    JSR pmf_unit
-   LDA pm_tdx
-   STA pm_ax
-   LDA pm_tdx+1
-   STA pm_ax+1
-   LDA pm_wu+2                          ; smag
-   STA pm_umag
-   JSR pmf_mul24s                       ; A = |tdx|*smag sign
-   EOR pm_wu+3                          ; product sign = sign XOR sneg
-   STA pm_p1s
-   LDX #2
-df_c1:
-   LDA pm_ures,X
-   STA pm_p1,X
-   DEX
-   BPL df_c1
-   LDA pm_tdy
-   STA pm_ax
-   LDA pm_tdy+1
-   STA pm_ax+1
-   LDA pm_wu                            ; cmag
-   STA pm_umag
-   JSR pmf_mul24s
-   EOR pm_wu+1
-   STA pm_ut                            ; sign 2
-   LDA pm_ures                          ; both products zero: on the ray
-   ORA pm_ures+1
-   ORA pm_ures+2
-   ORA pm_p1
-   ORA pm_p1+1
-   ORA pm_p1+2
-   BEQ df_dir
-   LDA pm_p1s
-   CMP pm_ut
-   BNE df_out
-   LDX #2
-df_c2:
-   LDA pm_ures,X
-   CMP pm_p1,X
-   BNE df_out
-   DEX
-   BPL df_c2
 df_dir:
 ; forward iff the dominant nonzero component points with the unit
    LDA pm_tdx
@@ -1656,38 +1623,52 @@ cm_rm:
 .endscope
 
 ; ============================================================================
-; pmf_unit — A = 64-angle -> pm_wu = (cmag,cneg,smag,sneg); mag6 has
-; unity pre-folded to 32 IN THE TABLE (gen_pm_sincos.py), so the decode
-; is a mask + a bit test. Row = pm_sincos + a*2 via zp_pm_p.
+; pmf_unit — A = 64-angle -> pm_wu = (cmag,cneg,smag,sneg), 8-BIT
+; magnitudes (2026-09-03: the view trig, fp.fp_sincos, replaces the
+; retired 5-bit grid — a walk now goes where the view looks; the
+; scaler is a plain >>8, see pmf_sc16).  The table is the first-
+; quadrant sine only (pm_sin8, 17 bytes, unity folded to 255); the
+; quadrant q = a>>4 and index i = a&15 give
+;    q even: smag = S[i], cmag = S[16-i]     q odd: swapped
+;    sneg = q>>1            cneg = (q>>1) ^ (q&1)
+; Clobbers X (callers reload it).  colmap._unit8 is the bit-exact mirror.
 ; ============================================================================
 SEG_PMB3
 .scope
 ::pmf_unit:
    AND #63
-   ASL A                                ; a*2 (fits u8: <= 126)
-   CLC
-   ADC #<pm_sincos
-   STA zp_pm_p
-   LDA #0
-   ADC #>pm_sincos
-   STA zp_pm_p+1
-   LDY #1                               ; cos byte first (pm_wu order)
-   LDX #0
-pu_dec:
-   LDA (zp_pm_p),Y
    PHA
-   AND #$3F
-   STA pm_wu,X
+   AND #15
+   TAX                                  ; X = i
    PLA
-   AND #$40
-   BEQ pu_z
-   LDA #1
-pu_z:
-   STA pm_wu+1,X
+   LSR A
+   LSR A
+   LSR A
+   LSR A                                ; A = q
+   LSR A                                ; A = q>>1 = sneg, C = q&1
+   STA pm_wu+3
+   BCS pu_odd
+   STA pm_wu+1                          ; even: cneg = q>>1
+   LDA pm_sin8,X                        ; smag = S[i]
+   STA pm_wu+2
+   TXA
+   EOR #15
+   TAX
+   INX                                  ; X = 16-i
+   LDA pm_sin8,X                        ; cmag = S[16-i]
+   STA pm_wu
+   RTS
+pu_odd:
+   EOR #1                               ; cneg = (q>>1) ^ 1
+   STA pm_wu+1
+   LDA pm_sin8,X                        ; cmag = S[i]
+   STA pm_wu
+   TXA
+   EOR #15
+   TAX
    INX
-   INX
-   DEY
-   BPL pu_dec
+   LDA pm_sin8,X                        ; smag = S[16-i]
+   STA pm_wu+2
    RTS
 .endscope
 
@@ -1855,23 +1836,18 @@ m24_done:
    LDA pm_usgn
    RTS
 
-; pmf_sc16 — pm_ax = (pm_ax * pm_umag) >> 5, sign-magnitude truncate
-; (ps_scale16 semantics; mag 32 = identity falls out). Preserves X.
+; pmf_sc16 — pm_ax = (pm_ax * pm_umag) >> 8, sign-magnitude truncate
+; (ps_scale16 semantics on the 8-bit unit: the result is the product's
+; two high bytes — no shift loop; the old >>5 spun 15 ROR steps).
+; Preserves X.
 .endscope
 SEG_PMMU
 .scope
 ::pmf_sc16:
    JSR pmf_mul24s
-   LDY #5
-sc_sh:
-   LSR pm_ures+2
-   ROR pm_ures+1
-   ROR pm_ures
-   DEY
-   BNE sc_sh
-   LDA pm_ures
-   STA pm_ax
    LDA pm_ures+1
+   STA pm_ax
+   LDA pm_ures+2
    STA pm_ax+1
    LDA pm_usgn
 ; pmf_negif — negate pm_ax when A != 0 (falls through from sc16's

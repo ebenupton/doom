@@ -151,9 +151,9 @@ def fp_sincos5(angle_byte):
     mag8 again and the 6502 derives mag5 = mag>>3 / eps = mag&7 in
     rot_select (floor semantics -- the exactness identity needs
     mag8 = 8*mag5 + eps).  This function keeps the OLD canonical
-    round-and-promote 5-bit values because pm's movement table
-    (gen_pm_sincos / colmap._unit5) bakes them -- movement was never
-    part of the smoothness regression and must not move."""
+    round-and-promote 5-bit values for reference; pm's movement table
+    moved to the 8-bit fp_sincos on 2026-09-03 (gen_pm_sincos /
+    colmap._unit8), so nothing bakes these any more."""
     s_mag, s_neg, s_unity, c_mag, c_neg, c_unity = fp_sincos(angle_byte)
     def _q(m, u):
         if u:

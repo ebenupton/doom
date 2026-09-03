@@ -850,11 +850,15 @@ def box_blocked(rx, ry):
     return False
 
 
-def dest_check(rx, ry, z_ps, mover_pos):
+def dest_check(rx, ry, z_ps, mover_pos, fx=0, fy=0):
     """(ok, new_vz) for a candidate point already box-clear. mover_pos =
-    6 live pos_hi bytes (prescaled s8)."""
+    6 live pos_hi bytes (prescaled s8).  fx/fy = the candidate's world
+    fraction bytes (see find_ss): the 6502 feeds PM_FXW to its exact
+    descent, and a candidate whose integer point sits on a partition
+    lands in a different subsector without them (the standing z-only
+    fuzz class, 2026-09-03)."""
     m = build()
-    ss = find_ss(rx, ry)
+    ss = find_ss(rx, ry, fx, fy)
     info = m['ss_info'][ss]
     if info != 0xFF:
         mi = info & 0x3F
@@ -874,7 +878,7 @@ def dest_check(rx, ry, z_ps, mover_pos):
     return True, svz
 
 
-def try_move(px, py, nx, ny, z_ps, mover_pos):
+def try_move(px, py, nx, ny, z_ps, mover_pos, fx=0, fy=0):
     """Full DOOM try-move for one candidate. Returns (ok, new_vz).
     NO walk-rect reject: the engine has none and neither does DOOM (an
     out-of-range blockmap block just yields no lines) — what keeps the
@@ -886,7 +890,7 @@ def try_move(px, py, nx, ny, z_ps, mover_pos):
     blocked, tm_ob = box_scan(nx, ny, z_ps, mover_pos)
     if blocked:
         return False, z_ps
-    ok, vz = dest_check(nx, ny, z_ps, mover_pos)
+    ok, vz = dest_check(nx, ny, z_ps, mover_pos, fx, fy)
     if not ok:
         return False, z_ps
     if tm_ob > vz:                        # crossed-line floors bind (the
@@ -986,27 +990,55 @@ def _walk_build():
 MOVE_TAB, TURN_TAB = _walk_build()
 
 
-def _sc16(v, mag5):
-    """(v * mag5) >> 5 sign-magnitude (ps_scale16): truncate toward 0."""
+def _sc16(v, mag8):
+    """(v * mag8) >> 8 sign-magnitude (ps_scale16 / pmf_sc16): truncate
+    toward 0.  8-BIT unit since 2026-09-03 (was >> 5 on the 5-bit grid)."""
     s = -1 if v < 0 else 1
-    return s * ((abs(v) * mag5) >> 5)
+    return s * ((abs(v) * mag8) >> 8)
 
 
-def _unit5(ang):
-    """(cmag5, sneg-cos, smag5, sneg-sin) of a 64-grid angle: mag 0..32
-    (unity folded to 32), matching the $BA00 table + cone/sone flags."""
+def _sin8_table():
+    """pm_sin8: first-quadrant sine of the 64-grid, i = 0..16, from the
+    view trig (fp.fp_sincos), unity folded to 255 — gen_pm_sincos.py's
+    one source, mirrored here."""
     import fp
-    # MOVEMENT trig: stays on the canonical 5-bit grid (the $BA00 table
-    # bakes fp_sincos5's round-and-promote values) -- the 2026-08-31
-    # view-trig restore does NOT touch pm.
-    sm, sn, so, cm, cn, co = fp.fp_sincos5((ang & 63) * 4)
-    return (32 if co else cm), cn, (32 if so else sm), sn
+    out = []
+    for i in range(17):
+        sm, sn, su, cm, cn, cu = fp.fp_sincos(i * 4)
+        out.append(255 if su else sm)
+    return out
+
+
+_SIN8 = None
+
+
+def _unit8(ang):
+    """(cmag, cneg, smag, sneg) of a 64-grid angle on the 8-bit unit —
+    the bit-exact mirror of pmf_unit's quadrant decode:
+      q = a>>4, i = a&15; q even: smag=S[i], cmag=S[16-i]; q odd: swapped;
+      sneg = q>>1; cneg = (q>>1) ^ (q&1).  (Signs of ZERO magnitudes
+    follow the same rule, as the 6502 does.)"""
+    global _SIN8
+    if _SIN8 is None:
+        _SIN8 = _sin8_table()
+    a = ang & 63
+    q, i = a >> 4, a & 15
+    if q & 1:
+        smag, cmag = _SIN8[16 - i], _SIN8[i]
+    else:
+        smag, cmag = _SIN8[i], _SIN8[16 - i]
+    sneg = q >> 1
+    cneg = (q >> 1) ^ (q & 1)
+    return cmag, cneg, smag, sneg
+
+
+_unit5 = _unit8                       # (old name: nothing should use it)
 
 
 def wall_project(dx, dy, wall_ang):
-    """P_HitSlideLine on the mag5 grid: project (dx,dy) onto the wall
-    direction. Returns (sdx, sdy)."""
-    cw, cn, sw, sn = _unit5(wall_ang)
+    """P_HitSlideLine on the 8-bit unit grid: project (dx,dy) onto the
+    wall direction. Returns (sdx, sdy)."""
+    cw, cn, sw, sn = _unit8(wall_ang)
     p = _sc16(-dx if cn else dx, cw) + _sc16(-dy if sn else dy, sw)
     sdx, sdy = _sc16(p, cw), _sc16(p, sw)
     return (-sdx if cn else sdx), (-sdy if sn else sdy)
@@ -1022,7 +1054,7 @@ def walk_disp(fields, fwd, back, angidx):
     if f == 0 or fwd == back:
         return 0, 0
     mag = MOVE_TAB[f]
-    cw, cn, sw, sn = _unit5(angidx)
+    cw, cn, sw, sn = _unit8(angidx)
     dx, dy = _sc16(mag, cw), _sc16(mag, sw)
     if cn:
         dx = -dx
@@ -1094,12 +1126,16 @@ def move_frame(px88, py88, z_ps, angidx, turnrem, fields, fwd, back,
     coasting, no friction drift and no per-axis momentum to project.
     Collision and wall sliding are unchanged.
 
-    d_fwd (the bca forward-coherence D-class gate) is 1 ONLY when the
-    frame's displacement is EXACTLY parallel to the view unit on the
-    mag6 grid (cross == 0, dot > 0) and every chunk committed clean.
-    Sliding therefore CLEARS it, which is the point: once the wall has
-    deflected the move it is no longer a forward walk and the bbox
-    cache's coherence assumption does not hold.
+    d_fwd (the bca forward-coherence D-class gate) is 1 when every chunk
+    committed clean AND the intended move points forward along the view
+    unit (the dominant component's sign matches the unit's).  Sliding
+    CLEARS it, which is the point: once the wall has deflected the move
+    it is no longer a forward walk and the bbox cache's coherence
+    assumption does not hold.  (The old cross==0 exactness test died
+    2026-09-03: with momentum retired the move is sc16(unit) by
+    construction and its >>8 residue is <= 0.37 deg, inside dbox_check's
+    +-4-column guard band; the test had left D_FWD dormant on 80% of
+    heading/field cases.)
 
     Returns (px88, py88, z_ps, angidx, turnrem, d_fwd)."""
     angidx, turnrem = turn_frame(angidx, turnrem, left, right, fields)
@@ -1117,8 +1153,9 @@ def move_frame(px88, py88, z_ps, angidx, turnrem, fields, fwd, back,
     while chunks:
         nx88, ny88 = px88 + cdx, py88 + cdy
         nx, ny = nx88 >> 5, ny88 >> 5     # 8.8 prescaled -> raw world int
+        fx, fy = (nx88 & 31) << 3, (ny88 & 31) << 3   # PM_FXW: (byte0 & $1F) << 3
         px, py = px88 >> 5, py88 >> 5
-        ok, vz = try_move(px, py, nx, ny, z_ps, mover_pos)
+        ok, vz = try_move(px, py, nx, ny, z_ps, mover_pos, fx, fy)
         if ok:
             px88, py88, z_ps = nx88, ny88, vz
             chunks -= 1
@@ -1139,17 +1176,19 @@ def move_frame(px88, py88, z_ps, angidx, turnrem, fields, fwd, back,
                 continue
         # axis fallback: y-only then x-only, killing the blocked axis
         clean = False
-        if cdy and try_move(px, py, px, (py88 + cdy) >> 5,
-                            z_ps, mover_pos)[0]:
-            ok, vz = try_move(px, py, px, (py88 + cdy) >> 5, z_ps, mover_pos)
+        if cdy and try_move(px, py, px, (py88 + cdy) >> 5, z_ps, mover_pos,
+                            (px88 & 31) << 3, ((py88 + cdy) & 31) << 3)[0]:
+            ok, vz = try_move(px, py, px, (py88 + cdy) >> 5, z_ps, mover_pos,
+                              (px88 & 31) << 3, ((py88 + cdy) & 31) << 3)
             py88 += cdy
             z_ps = vz
             cdx = 0
             chunks -= 1
             continue
-        if cdx and try_move(px, py, (px88 + cdx) >> 5, py,
-                            z_ps, mover_pos)[0]:
-            ok, vz = try_move(px, py, (px88 + cdx) >> 5, py, z_ps, mover_pos)
+        if cdx and try_move(px, py, (px88 + cdx) >> 5, py, z_ps, mover_pos,
+                            ((px88 + cdx) & 31) << 3, (py88 & 31) << 3)[0]:
+            ok, vz = try_move(px, py, (px88 + cdx) >> 5, py, z_ps, mover_pos,
+                              ((px88 + cdx) & 31) << 3, (py88 & 31) << 3)
             px88 += cdx
             z_ps = vz
             cdy = 0
@@ -1158,13 +1197,13 @@ def move_frame(px88, py88, z_ps, angidx, turnrem, fields, fwd, back,
         break                             # boxed in
     d_fwd = 0
     if clean:
-        cw, cn, sw, sn = _unit5(angidx)
-        ux = -cw if cn else cw
-        uy = -sw if sn else sw
-        if tdx * uy == tdy * ux:          # exactly on the view ray
-            if (tdx != 0 and (tdx > 0) == (ux > 0)) or \
-               (tdx == 0 and tdy != 0 and (tdy > 0) == (uy > 0)):
-                d_fwd = 1                 # ... pointing forward
+        cw, cn, sw, sn = _unit8(angidx)
+        # forward iff the dominant nonzero component points with the
+        # unit (pf_dfwd's df_dir: sign vs the unit's neg flag)
+        if tdx != 0:
+            d_fwd = 1 if (tdx < 0) == bool(cn) else 0
+        elif tdy != 0:
+            d_fwd = 1 if (tdy < 0) == bool(sn) else 0
     return px88, py88, z_ps, angidx, turnrem, d_fwd
 
 

@@ -117,7 +117,7 @@ run('bare_boot', ['test_bare_boot.py'],
 run('walkdrv_loop', ['tools/test_walkdrv_loop.py'],
     lambda o: 'WALKDRV LOOP: PASS' in o)
 run('pm_fuzz', ['tools/pm_fuzz.py'],
-    lambda o: 'TOTAL divergences: 16' in o)  # standing-16 since the port-ob vz fix (8/build z-only residue); growth = regression
+    lambda o: 'TOTAL divergences: 0' in o)  # ZERO since 2026-09-03: the 8/build z-only residue was the mirror's dest_check descending on the integer point (no PM_FXW fraction); any divergence = regression
 # The banked (non-copro) HUD has the same font search. The MOS font is not
 # at a fixed address -- OS 1.2 $C000, MOS 3.20 $F900 -- and hardwiring
 # $C000 is what corrupted the readout on a Master.
@@ -161,6 +161,11 @@ run('pickup_ladders', ['tools/test_pickup_ladders.py'],
     lambda o: 'PICKUPLADDERS: PASS' in o)
 run('object_draws', ['tools/test_object_draws.py'],
     lambda o: 'OBJDRAWS: PASS' in o)
+run('authority_monotonic', ['tools/test_authority_monotonic.py'],
+    lambda o: 'AUTHMONO: PASS' in o)   # armed object silhouettes must sweep
+                                       # L-to-R; a descending authority run
+                                       # sprays escaping wall fragments
+                                       # (the helmet/vest HUD repro 2026-09-03)
 run('span_band', ['tools/test_span_band.py'],
     lambda o: 'SPANBAND: PASS' in o)
 
