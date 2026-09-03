@@ -2,9 +2,13 @@
 ; ============================================================================
 ; Debug HUD — position and rotation on the top character row of the display.
 ;
-; Renders "X=hhhh.hh Y=hhhh.hh R=hh F=hh" (map-relative prescaled
+; Renders "X=hhhh.hh Y=hhhh.hh R=hh F=hh C" (map-relative prescaled
 ; position, s16 integer + 8-bit fraction of the driver's 8.8 fixed point,
-; the view angle byte, and the PAL fields the last frame took) into the
+; the view angle byte, the PAL fields the last frame took, and the bbox-
+; cache class the frame ran in: P = pristine (moved, cache off), R =
+; rotation cache (stationary or turning), D = forward-coherence cache;
+; it is zp_bv_entry's low byte, the vectored bbox_visible entry that
+; bca_frame chose for the frame — 2026-09-03) into the
 ; BACK buffer's first character row, after the
 ; frame render and before the flip, using the OS ROM font.  The fraction
 ; matters for exact position capture: the engine consumes the full 8.8,
@@ -26,7 +30,7 @@
 ; leaves the answer in DV_HUD_FONT. Note $F900 is not glyph-aligned the
 ; way $C000 is, so hud_char's offset add carries — see there.
 ;
-;   for i, ch in enumerate(template):   # "X=....%.. Y=....%.. R=.. F=.."
+;   for i, ch in enumerate(template):   # "X=....%.. Y=....%.. R=.. F=.. C"
 ;       if ch is a hex slot: ch = hexdigit(nibble of the referenced value)
 ;       dst = back_fb + i*8                  # back_fb page from the driver
 ;       dst[0..7] = os_font[(ch-32)*8 .. +7]
@@ -51,6 +55,8 @@
 ; ============================================================================
 
 .if ::BANKED
+
+.import dbox_check, bbox_check_angle    ; ang/bca.s: the class entries
 
 ; zp scratch — frame-scoped: these sit inside the VX vertex structs
 ; ($E2-$FF), which are per-seg working state, dead between the frame's
@@ -152,7 +158,23 @@ hd_go:
    LDA #'='
    JSR hud_char
    LDA HUD_FIELDS
-; fall through to hud_hex for the final value
+   JSR hud_hex
+; " C" — the frame's bbox-cache class, from the entry vector bca_frame
+; left in zp_bv_entry (the vectored bbox_visible; low bytes are asserted
+; distinct in bca.s): D = dbox_check, R = bbox_check_angle, else P.
+   LDA #' '
+   JSR hud_char
+   LDA zp_bv_entry
+   LDX #'D'
+   CMP #<dbox_check
+   BEQ hd_cls
+   LDX #'R'
+   CMP #<bbox_check_angle
+   BEQ hd_cls
+   LDX #'P'
+hd_cls:
+   TXA
+   JMP hud_char                            ; tail: its RTS is ours
 .endscope
 
 ; --- hud_hex: A = byte -> two hex digit cells. Clobbers A,X,Y. ---

@@ -1337,6 +1337,8 @@ SEG_CODE
 .endif
 .export bca_frame
 .export box_classify
+.export dbox_check, bbox_check_angle    ; hud.s: the frame's class letter is
+                                        ; zp_bv_entry's low byte vs these
 bca_frame:
 ; Per-frame EPOCH KEEPER (vectored 2026-07-20, Eben's design): the
 ; frame class lives in TWO ZP VECTORS, not a flag —
