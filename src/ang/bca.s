@@ -1483,15 +1483,30 @@ rc_wipe:
 ; straddling (0,255) — always a SUPERSET of the true extent (+2 covers
 ; the check's +-1 rounding wobble), and a superset only over-descends,
 ; which the gate invariant proves pixel-free. Entries recompute every
-; 16th forward frame, round-robin by (node + bca_dfrm) & 15 (period
-; swept over {2,4,8,16} on the 4-view bench 2026-07-21: recompute cost
-; dominates staleness cost — 16 wins the mean, 5.3% vs 8's 5.0%; the
+; 8th forward frame, round-robin by (node + bca_dfrm) & 7 (period 16
+; was chosen on a 12-u/frame rig 2026-07-21; the 2026-09-03 field-
+; scaled rig — real stride 27-36 u — measured 8 best with NSR below on
+; the armour walk AND the game-exact corpus, level on the 4 views; the
 ; serve is a SUPERSET at any staleness, so the period is pure tuning).
 ; MISS/refresh: stash the probe's byte+bit (rc_bytehi/rc_bit), JSR the
 ; side's pristine tree (its fused exits run has_gap and RTS the C/V
 ; signature), store at return from the freshly-born bca_ilo/ihi
 ; (BVS picks cull code 1 vs extent code 0; C rides through the store
 ; loads untouched), publish the bit, and hand C to the walk.
+; NSR — NEVER STORE A has_gap-REJECTED EXTENT (2026-09-03): an extent
+; that failed has_gap is behind solid columns, but its FOE superset
+; ((0,ihi+2) / (ilo-2,255) / (0,255)) almost always overlaps SOME open
+; column, so caching it serves a wasted descent into a subtree that
+; draws nothing on the very next frame (traces: the entry re-wasted on
+; ALTERNATE frames after every refresh; wasted descends cost 5k in /
+; 15k out per forward frame on the armour walk, more than the serves
+; saved).  C=0 at the extent store now DROPS the entry (bit cleared —
+; a refresh may have found it set); the entry misses every frame while
+; it stays occluded (one classify, ~450 cyc, instead of a 2-16k
+; descent) and is cached again as soon as it passes.  Zero cost on the
+; hit path, one BCC on the store.  Measured 2026-09-03 (armour walk,
+; fixed 30-u stride, identical positions): 243,655 -> 239,718 cyc/frame
+; (-1.6%), corpus 219,471 -> 217,926, views 4.5% -> 5.7% save.
 ; (Inside boxes DO store here — their (0,255) birth is a straddle serve,
 ; itself a superset under forward motion.)
 ; ============================================================================
@@ -1520,7 +1535,7 @@ dcap_s1:
    TYA                                     ; visible: refresh slot?
    CLC
    ADC bca_dfrm
-   AND #15
+   AND #7                                  ; refresh period 8 (see header)
    BEQ dcap_s1_fresh
    LDA RC_P2L_1,Y                          ; ihi
    CMP #125                                ; GUARD BAND (from the retired
@@ -1572,6 +1587,8 @@ dcap_s1_miss:
 ; PLA/LSR A signature-restore are gone (-13 cycles per store, and the
 ; stack byte with them).
    BVS dst1_cull                           ; V=1: angle cull -> code 1
+   BCC dst_drop                            ; C=0: NSR — has_gap-rejected
+                                        ; extent is never cached (header)
    LDY zp_node_ch_l
    LDA bca_ilo                             ; V=0: extent record from the
    STA RC_P1L_1,Y                          ; freshly-born bca_ilo/bca_ihi
@@ -1590,6 +1607,13 @@ dst1_bit:
    ORA rc_bit                              ; (ORA: N,Z only — C intact)
    STA RCACHE_COMPUTED,X
    RTS                                     ; C = bcls verdict, untouched
+dst_drop:                                  ; NSR: un-cache the probed entry.
+   LDX rc_bytehi                           ; C=0 rides through (LDX/LDA/EOR/
+   LDA rc_bit                              ; AND/STA touch no carry); the
+   EOR #$FF                                ; walk skips on it as usual
+   AND RCACHE_COMPUTED,X
+   STA RCACHE_COMPUTED,X
+   RTS
 ; --- side 0 (mirror; k & 7 has no ORA) ---
 dcap_s0:
    TYA
@@ -1609,7 +1633,7 @@ dcap_s0:
    TYA
    CLC
    ADC bca_dfrm
-   AND #15
+   AND #7
    BEQ dcap_s0_fresh
    LDA RC_P2L_0,Y
    CMP #125                                ; guard band (see side 1)
@@ -1646,7 +1670,8 @@ dcap_s0_miss:
    LDY zp_node_ch_l
    JSR bcls_s0
    BVS dst0_cull                           ; C/V decode — see the side-1
-   LDY zp_node_ch_l                        ; mirror for the full story
+   BCC dst_drop                            ; mirror for the full story (NSR)
+   LDY zp_node_ch_l
    LDA bca_ilo
    STA RC_P1L_0,Y
    LDA bca_ihi

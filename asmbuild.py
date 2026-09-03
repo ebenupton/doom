@@ -67,7 +67,15 @@ def build(asm, banked=0, c02=None, out=None, force=False):
         c02 = env_c02()
     c02 = int(c02)
     banked = int(banked)
-    key = ('engine', banked, c02)
+    # DOOM_ASMDEFS (2026-09-03): extra "SYM=val,SYM2=val" ca65 defines for
+    # POLICY EXPERIMENTS (dwalk_bench builds D-cache variants).  Part of the
+    # build key AND the on-disk marker, so a variant never masquerades as
+    # the plain build in a later process (the _on_disk landmine, again).
+    defs = os.environ.get('DOOM_ASMDEFS', '')
+    dflags = []
+    for d in filter(None, defs.split(',')):
+        dflags += ['-D', d]
+    key = ('engine', banked, c02, defs)
     # CROSS-PROCESS variant marker (2026-09-02): the four variants share
     # output filenames (engine_drv.bin etc.), so "outputs exist" says
     # nothing about WHICH variant is on disk -- a fresh process reading
@@ -80,7 +88,7 @@ def build(asm, banked=0, c02=None, out=None, force=False):
         _disk = open(_marker).read()
     except OSError:
         _disk = ''
-    if key in _built and _disk == f'{banked},{c02}' and not force:
+    if key in _built and _disk == f'{banked},{c02},{defs}' and not force:
         return ''
     # refuse to build with unallocated ZP declarations (name = ?) pending —
     # run tools/zpcheck.py --alloc to assign them
@@ -92,13 +100,32 @@ def build(asm, banked=0, c02=None, out=None, force=False):
                            f'— run: python3 tools/zpcheck.py --alloc')
     objdir = os.path.join(_ROOT, 'build')
     os.makedirs(objdir, exist_ok=True)
+    # BUILD LOCK (2026-09-03): parallel bench processes each relinked the
+    # shared outputs and read each other's half-written files (ld65 "Read
+    # error at position 53248").  One builder at a time; the marker check
+    # repeats under the lock so the waiters skip the rebuild.
+    import fcntl
+    with open(os.path.join(objdir, '.build.lock'), 'w') as _lk:
+        fcntl.flock(_lk, fcntl.LOCK_EX)
+        try:
+            _disk = open(_marker).read()
+        except OSError:
+            _disk = ''
+        if _disk == f'{banked},{c02},{defs}' and not force:
+            _built.add(key)
+            _on_disk[banked] = c02
+            return ''
+        return _build_locked(asm, banked, c02, defs, dflags, key, objdir, _marker)
+
+
+def _build_locked(asm, banked, c02, defs, dflags, key, objdir, _marker):
     text = ''
     objs = []
     for src in _SOURCES:
         name = os.path.basename(src).replace('.s', '')
         obj = os.path.join(objdir, f'{name}_b{banked}c{c02}.o')
-        text += _run(['ca65', '-g', '-D', f'C02={c02}', '-D', f'BANKED={banked}',
-                      '-l', os.path.join(objdir, f'{name}_b{banked}c{c02}.lst'),
+        text += _run(['ca65', '-g', '-D', f'C02={c02}', '-D', f'BANKED={banked}']
+                     + dflags + ['-l', os.path.join(objdir, f'{name}_b{banked}c{c02}.lst'),
                       os.path.join(_ROOT, src), '-o', obj])
         objs.append(obj)
     text += _run(['ld65', '-C', os.path.join(_ROOT, _CFGS[banked])] + objs +
@@ -107,7 +134,7 @@ def build(asm, banked=0, c02=None, out=None, force=False):
     _built.add(key)
     _on_disk[banked] = c02
     with open(_marker, 'w') as _mf:
-        _mf.write(f'{banked},{c02}')
+        _mf.write(f'{banked},{c02},{defs}')
     return text
 
 
