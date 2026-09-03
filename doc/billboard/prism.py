@@ -132,33 +132,71 @@ def box_lines(o, ze, D, K2, lod):
     return L
 
 def vest_lines(o, ze, D, K2, lod):
+    # OUTLINE tracing (Eben 2026-09-02, round 2): the old L0 outline IS
+    # the L1 now; the new L0 doubles the line count with curved
+    # refinements of every run.  Both tiers close the NECK HOLE into a
+    # LOOP: the front scoop bottom, two depth stubs, and the BACK OF THE
+    # NECK -- the rear rim seen through the hole from the raised eye
+    # (armed: it is the topmost line across the opening).
     p = Prism(o['h'], o['d'], ze, D, K2)
     h, wa = o['h'], o['waist']
     (px_, pz), (ax_, az) = o['pit'], o['arm']
     st, so, si, sz = o['side_top'], o['sh_out'], o['sh_in'], o['scoop_z']
-    L = [(p.F(-wa, 0), p.F(wa, 0), 'b')]                     # bottom
+    mid = lambda A, B, ox, oz: ((A[0]+B[0])/2.0+ox, (A[1]+B[1])/2.0+oz)
+    L = []
     if lod == 0:
+        # DOUBLED outline: each straight run becomes two segments through
+        # a nudged midpoint (gentle curvature, sprite-side bulges).
+        # LADDER-FEASIBLE FORM (2026-09-02): the engine's y ladder is
+        # syt + f*H with f in [0,255], so nothing may sit above the top
+        # or below the ground -- the hem curves ENDS-UP (+0.8) instead
+        # of centre-down, and the shoulder crown rides AT the top with
+        # the ends dipped 0.3.
+        he = 0.8                                             # hem end lift
+        L += [(p.F(-wa, he), p.F(0, 0), 'b'), (p.F(0, 0), p.F(wa, he), 'b')]
+        shd = h - 0.3                                        # shoulder ends
+        for s in (-1, 1):
+            w1 = mid((s*wa, he), (s*px_, pz), s*0.7, 0)      # waist bows out
+            f1 = mid((s*px_, pz), (s*ax_, az), s*0.5, 0)     # flare bows out
+            L += [(p.F(s*wa, he),  p.F(*w1), 'b'),
+                  (p.F(*w1),      p.F(s*px_, pz), 'b'),
+                  (p.F(s*px_, pz), p.F(*f1), 'b'),
+                  (p.F(*f1),      p.F(s*ax_, az), 'b')]
+            sm = mid((s*ax_, az), (s*ax_, st), 0, 0)         # side: split at the
+            L += [(p.F(s*ax_, az), p.B(*sm), 'b'),           # F->B seam only (an
+                  (p.B(*sm),      p.B(s*ax_, st), 'b')]      # x-bulge here pokes
+                                                             # past the armed
+                                                             # corner: rule FAIL
+            c1 = mid((s*ax_, st), (s*so, shd), s*0.4, 0.4)   # rounded corner
+            L += [(p.B(s*ax_, st), p.B(*c1), 'a'),
+                  (p.B(*c1),      p.B(s*so, shd), 'a')]
+            s1 = ((s*so + s*si)/2.0, h)                      # crown AT the top
+            L += [(p.B(s*so, shd), p.B(*s1), 'a'),
+                  (p.B(*s1),    p.B(s*si, shd), 'a'),
+                  (p.B(s*si, shd), p.B(s*si, sz), 'b')]      # scoop side
+        bz = (sz + h)/2.0                    # back of neck: halfway from
+                                             # the old rim up to the top
+        fb = mid((-si, sz), (si, sz), 0, -0.6)               # front rim sags
+        bb = mid((-si, bz), (si, bz), 0, -0.3)               # rear rim, gentler
+        L += [(p.F(-si, sz), p.F(*fb), 'b'), (p.F(*fb), p.F(si, sz), 'b'),
+              (p.B(-si, bz), p.B(*bb), 'a'), (p.B(*bb), p.B(si, bz), 'a'),
+              (p.F(-si, sz), p.B(-si, bz), 'b'),             # hole depth stubs
+              (p.F( si, sz), p.B( si, bz), 'b')]
+    else:
+        # L1 = the old L0 outline, plus the neck loop.
+        L += [(p.F(-wa, 0), p.F(wa, 0), 'b')]                # bottom
         for s in (-1, 1):
             L += [(p.F(s*wa, 0),  p.F(s*px_, pz), 'b'),      # waist slant
                   (p.F(s*px_, pz), p.F(s*ax_, az), 'b'),     # armpit flare
-                  (p.B(s*ax_, st), p.F(s*ax_, az), 'b'),     # side, extended
-                                                             # up to the REAR
-                  (p.F(s*ax_, st), p.F(s*so, h), 'b'),       # corner slant
-                  (p.B(s*ax_, st), p.B(s*so, h), 'a'),       #   rear: ARMED
-                  (p.F(s*so, h),  p.F(s*si, h), 'b'),        # shoulder top
-                  (p.B(s*so, h),  p.B(s*si, h), 'a'),        #   rear: ARMED
-                  (p.F(s*si, h),  p.F(s*si, sz), 'b'),       # scoop side
-                  (p.B(s*si, h),  p.B(s*si, sz), 'b')]       #   rear stub
-    else:
-        for s in (-1, 1):
-            L += [(p.F(s*wa, 0),  p.F(s*ax_, az), 'b'),      # waist, straight
-                  (p.B(s*ax_, h), p.F(s*ax_, az), 'b'),      # side to rear top
-                  (p.F(s*ax_, h), p.F(s*si, h), 'b'),        # shoulder top
-                  (p.B(s*ax_, h), p.B(s*si, h), 'a'),        #   rear: ARMED
-                  (p.F(s*si, h),  p.F(s*si, sz), 'b'),       # scoop side
-                  (p.B(s*si, h),  p.B(s*si, sz), 'b')]       #   rear stub
-    L += [(p.F(-si, sz), p.F(si, sz), 'b'),                  # scoop bottom
-          (p.B(-si, sz), p.B(si, sz), 'a')]                  #   rear: ARMED
+                  (p.B(s*ax_, st), p.F(s*ax_, az), 'b'),     # side
+                  (p.B(s*ax_, st), p.B(s*so, h), 'a'),       # corner slant: ARMED
+                  (p.B(s*so, h),  p.B(s*si, h), 'a'),        # shoulder: ARMED
+                  (p.B(s*si, h),  p.B(s*si, sz), 'b')]       # scoop side
+        bz = (sz + h)/2.0                    # back of neck: halfway up
+        L += [(p.F(-si, sz), p.F(si, sz), 'b'),              # neck: front rim
+              (p.B(-si, bz), p.B(si, bz), 'a'),              #   back of neck: ARMED
+              (p.F(-si, sz), p.B(-si, bz), 'b'),             #   hole depth stubs
+              (p.F( si, sz), p.B( si, bz), 'b')]
     return L
 
 def potion_lines(o, ze, D, K2, lod):
@@ -199,7 +237,11 @@ def potion_lines(o, ze, D, K2, lod):
         pieces.append(cur)
         for u, v in pieces:
             xm = (u[0] + v[0])/2.0
-            L.append((u, v, 'b' if abs(xm) < wn else 'a'))
+            if abs(xm) < wn:
+                continue        # the under-stem piece is OMITTED (Eben
+                                # 2026-09-02): it closed off the neck of
+                                # the bottle -- the bulb opens into the stem
+            L.append((u, v, 'a'))
     L += [(dn[i], dn[i+1], 'b') for i in range(len(dn)-1)]
     L += [((-a, cy - a*A3), (-a, cy + a*A3), 'b'),
           (( a, cy - a*A3), ( a, cy + a*A3), 'b')]
@@ -223,23 +265,45 @@ def helmet_lines(o, ze, D, K2, lod):
     y = lambda z: (o['h'] - z)*k
     P = o['prof']
     w0 = P[0][0]
-    # The base CONFORMS TO THE RIM'S INDENTATIONS (Eben, 2026-08-31): two
-    # square notches read off the sprite's bottom rows, so the bottom edge
-    # is three feet with the notch walls and roofs drawn.
     xi, xo, nz = o['notch']
     b0, bn = y(P[0][1]), y(P[0][1] + nz)
-    L = [((-w0*k, b0), (-xo*k, b0), 'b'),        # left foot
-         ((-xi*k, b0), ( xi*k, b0), 'b'),        # centre foot
-         (( xo*k, b0), ( w0*k, b0), 'b')]        # right foot
-    for sgn in (-1, 1):
-        L += [((sgn*xo*k, b0), (sgn*xo*k, bn), 'b'),   # notch walls
-              ((sgn*xi*k, b0), (sgn*xi*k, bn), 'b'),
-              ((sgn*xo*k, bn), (sgn*xi*k, bn), 'b')]   # notch roof
-    for sgn in (-1, 1):
-        for i in range(len(P)-1):
-            (x0, z0), (x1, z1) = P[i], P[i+1]
-            L.append(((sgn*x0*k, y(z0)), (sgn*x1*k, y(z1)),
-                      'b' if i == 0 else 'a'))   # sides plain, dome ARMED
+    if lod == 0:
+        # THE HOPLITE CUT (Eben 2026-09-02): BON2A0's outer feet taper --
+        # the bottom corners are DIAGONALS (side comes down to z=3, then
+        # cuts in to the foot at x=5.5) -- and the base gaps trace UP
+        # into proper EYEHOLES: walls rising to z=4, closed with a
+        # two-segment almond arch, open at the bottom edge like the
+        # sprite's slits.
+        dz, dxf = 3.0, 5.5                       # diagonal: (±8,3) -> (±5.5,0)
+        # EYEHOLE PATH (Eben 2026-09-02): on the LHS go N, NW, E, S --
+        # up the outer wall, FLARE up-and-out toward the temple, roof
+        # straight across, down the nasal wall.  Mirrored on the right.
+        wz, fz, fx = 3.5, 5.5, 5.2               # wall top / flare top / flare x
+                                                 # (+1 sprite px 2026-09-02:
+                                                 # the eyepieces sit further
+                                                 # up the helmet)
+        L = [((-xi*k, b0), (xi*k, b0), 'b')]     # nasal foot
+        for sgn in (-1, 1):
+            L += [((sgn*dxf*k, b0), (sgn*xo*k, b0), 'b'),      # outer foot
+                  ((sgn*w0*k, y(dz)), (sgn*dxf*k, b0), 'b'),   # DIAGONAL corner
+                  ((sgn*xo*k, b0), (sgn*xo*k, y(wz)), 'b'),    # N: outer wall
+                  ((sgn*xo*k, y(wz)), (sgn*fx*k, y(fz)), 'b'), # NW: temple flare
+                  ((sgn*fx*k, y(fz)), (sgn*xi*k, y(fz)), 'b'), # E: roof
+                  ((sgn*xi*k, y(fz)), (sgn*xi*k, b0), 'b')]    # S: nasal wall
+        for sgn in (-1, 1):
+            L += [((sgn*w0*k, y(dz)), (sgn*P[1][0]*k, y(P[1][1])), 'b')]  # side
+            for i in range(1, len(P)-1):
+                (x0, z0), (x1, z1) = P[i], P[i+1]
+                L.append(((sgn*x0*k, y(z0)), (sgn*x1*k, y(z1)), 'a'))     # dome
+    else:
+        # L1 (Eben 2026-09-02): no base indentations -- one straight
+        # bottom -- and the top in THREE lines, not five: each dome side
+        # collapses to a single diagonal, plus the flat top.
+        L = [((-w0*k, b0), (w0*k, b0), 'b')]         # bottom
+        for sgn in (-1, 1):
+            L += [((sgn*w0*k, b0), (sgn*w0*k, y(P[1][1])), 'b'),       # side
+                  ((sgn*w0*k, y(P[1][1])), (sgn*P[-1][0]*k, y(P[-1][1])), 'a')]
+                                                     # dome diagonal: ARMED
     xt, zt = P[-1]
     L.append(((-xt*k, y(zt)), (xt*k, y(zt)), 'a'))                   # top
     return L

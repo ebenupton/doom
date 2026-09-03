@@ -581,13 +581,48 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     obj_art += _CTL(OBJ_ART_END)
     assert off_art_lamp == 52, \
         f'OBJ_ART_LAMP drifted: {off_art_lamp} (layout.inc says 52)'
-    # WINDOW A ends here (HEX + LAMP = 140 B): pad to 256.  Window B
-    # holds all four pickup templates (228 B).  The template
-    # walker's four reads are abs,X off a window base whose HIGH BYTE is
-    # the per-object SMC patch -- offsets stay bytes, and a window must
-    # never exceed 256 B (start+3+off <= 255 holds because the deepest
-    # window is 252 used).  Window A is byte-identical to the whole art
-    # table the flat build has always copied, so flat is untouched.
+    # HELMET L0 -- THE HOPLITE (Eben 2026-09-02): diagonal bottom
+    # corners off BON2A0's tapering feet, and the base gaps traced UP
+    # into eyeholes -- N up the outer wall, NW temple flare, E roof,
+    # S down the nasal wall (open at the bottom edge, like the sprite's
+    # slits).  Window A had the 116 free bytes this 88 needs.
+    #   x offs: 0=-a 2=-x6 4=-x4 6=-x3 8=-x2 10=+a; spill 38=+x2
+    #   40=+x3 42=+x4 44=+x6 46=-fx 48=+fx 50=-dxf 52=+dxf
+    #   (fx = 5.2 temple-flare reach, dxf = 5.5 diagonal foot)
+    #   y offs: 0=syt 2=dome z13 4=z10 6=fz(5.5) 8=wz(3.5) 10=dz(3) 12=syb
+    off_art_helm_l0 = len(obj_art)
+    obj_art += [8, 12, 38, 12]                  # nasal foot
+    obj_art += [50, 12, 4, 12]                  # outer feet
+    obj_art += [42, 12, 52, 12]
+    obj_art += [0, 10, 50, 12]                  # DIAGONAL corners
+    obj_art += [52, 12, 10, 10]
+    obj_art += [4, 8, 4, 12]                    # N: eyehole outer walls
+    obj_art += [42, 8, 42, 12]
+    obj_art += [46, 6, 4, 8]                    # NW: temple flares
+    obj_art += [42, 8, 48, 6]
+    obj_art += [46, 6, 8, 6]                    # E: roofs
+    obj_art += [38, 6, 48, 6]
+    obj_art += [8, 6, 8, 12]                    # S: nasal walls
+    obj_art += [38, 6, 38, 12]
+    obj_art += [0, 4, 0, 10]                    # sides (from the diagonal top)
+    obj_art += [10, 4, 10, 10]
+    obj_art += _CTL(OBJ_ART_ARM)
+    # AUTHORITY RUN MUST BE MONOTONIC LEFT-TO-RIGHT (2026-09-03): the fused
+    # walker advances a single column cursor, so a descending arm segment
+    # runs it backward and corrupts the span pool -- escaping wall
+    # fragments to the screen edge (Eben's HUD repro).  One ascending
+    # sweep 166->192: left arc, top, right arc.
+    obj_art += [0, 4, 2, 2]                     # dome: authority (left arc)
+    obj_art += [2, 2, 6, 0]
+    obj_art += [6, 0, 40, 0]                    # top
+    obj_art += [40, 0, 44, 2]                   # right arc (ASCENDING)
+    obj_art += [44, 2, 10, 4]
+    obj_art += _CTL(OBJ_ART_END)
+    assert off_art_helm_l0 == 140, f'OBJ_ART_HELM_L0 drifted: {off_art_helm_l0}'
+    # WINDOW A ends here (HEX + LAMP + HELM_L0 = 228 B): pad to 256.
+    # The template walker's four reads are abs,X off a window base whose
+    # HIGH BYTE is the per-object SMC patch -- offsets stay bytes, and a
+    # window must never exceed 256 B.
     obj_art += [0xFF] * (256 - len(obj_art))
 
     # -- techno pillar, thing 48 (2026-08-31) -----------------------------
@@ -621,77 +656,84 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     obj_art += _CTL(OBJ_ART_END)
     assert off_art_box == 256, f'OBJ_ART_BOX drifted: {off_art_box} (window B head)'
 
-    # POTION: the circle with the (wide) stem, L1 -- 3-segment arcs, the
-    # upper arc armed ONLY where exposed (split at the stem feet).
-    #   x offs: 0=-a 2=-qa 4=-wn 6=+wn 8=+qa 10=+a
-    #   y offs: 0=syt 2=arc-mid/stem-foot 4=upper-end 6=lower-end 8=syb
-    off_art_potion = len(obj_art)
-    obj_art += [4, 2, 6, 2]                     # arc mid, under the stem
-    obj_art += [0, 6, 2, 8]                     # down arc
-    obj_art += [2, 8, 8, 8]
-    obj_art += [8, 8, 10, 6]
-    obj_art += [0, 4, 0, 6]                     # sides
-    obj_art += [10, 4, 10, 6]
-    obj_art += [4, 0, 4, 2]                     # stem sides
-    obj_art += [6, 0, 6, 2]
+    # POTION L1 IS DEAD (Eben 2026-09-02: "disable L1 for potions") --
+    # the dodecagon (window C) draws at every size; obj_lodh carries $FF.
+    #
+    # VEST L0 -- the DOUBLED outline (Eben 2026-09-02): every run split
+    # through a nudged midpoint (hem ends lift, waist and armpit bow
+    # out, rounded corner, crown at the top with dipped shoulder ends,
+    # sagging neck rims), and the NECK LOOP: front rim + depth stubs +
+    # the BACK OF THE NECK (armed -- topmost through the opening).
+    #   x offs: 0=-a 2=-w(5.5) 4=-s(3) 6=+s 8=+w 10=+a; spill 42=-px(10.5)
+    #   44=+px 46=-so(13.5) 48=+so 50=-w1(8.7) 52=+w1 54=-cr(8.25) 56=+cr
+    #   58=-c(14.9) 60=+c 62=cx
+    #   y offs: 0=syt 2=c1(16.75) 4=shd(16.7) 6=st(16) 8=bz(15) 10=bb(14.7)
+    #   12=sm(14) 14=sz(13) 16=fb(12.4) 18=az(12) 20=f1(11) 22=pz(10)
+    #   24=w1(5.4) 26=hem(0.8) 28=syb
+    off_art_vest_l0 = len(obj_art)
+    obj_art += [2, 26, 62, 28]                  # hem, ends lifted
+    obj_art += [62, 28, 8, 26]
+    obj_art += [50, 24, 2, 26]                  # waist bows
+    obj_art += [42, 22, 50, 24]
+    obj_art += [8, 26, 52, 24]
+    obj_art += [52, 24, 44, 22]
+    obj_art += [46, 20, 42, 22]                 # armpit flares
+    obj_art += [0, 18, 46, 20]
+    obj_art += [44, 22, 48, 20]
+    obj_art += [48, 20, 10, 18]
+    obj_art += [0, 12, 0, 18]                   # sides, split at the seam
+    obj_art += [0, 6, 0, 12]
+    obj_art += [10, 12, 10, 18]
+    obj_art += [10, 6, 10, 12]
+    obj_art += [4, 4, 4, 14]                    # scoop sides
+    obj_art += [6, 4, 6, 14]
+    obj_art += [4, 14, 62, 16]                  # neck: front rim, sagging
+    obj_art += [62, 16, 6, 14]
+    obj_art += [4, 8, 4, 14]                    # neck: depth stubs
+    obj_art += [6, 8, 6, 14]
     obj_art += _CTL(OBJ_ART_ARM)
-    obj_art += [0, 4, 2, 2]                     # exposed upper arc
-    obj_art += [2, 2, 4, 2]
-    obj_art += [6, 2, 8, 2]
-    obj_art += [8, 2, 10, 4]
-    obj_art += [4, 0, 6, 0]                     # stem top
+    # MONOTONIC L-to-R authority (2026-09-03): a SINGLE ascending sweep of
+    # the top silhouette -- left corner up to the crown, across the neck
+    # opening on the back-of-neck rim, up the right corner.  The fused
+    # walker advances one column cursor; a descending segment runs it
+    # backward and sprays escaping wall fragments (Eben's HUD repro).
+    obj_art += [0, 6, 58, 2]                    # L corner: cx-a -> cx-c
+    obj_art += [58, 2, 46, 4]                   #           cx-c -> cx-so
+    obj_art += [46, 4, 54, 0]                   # L shoulder rise to crown
+    obj_art += [54, 0, 4, 4]                    # crown -> scoop edge
+    obj_art += [4, 8, 62, 10]                   # NECK: back-of-neck rim
+    obj_art += [62, 10, 6, 8]                   #       cx -> +scoop
+    obj_art += [6, 4, 56, 0]                    # R shoulder rise to crown
+    obj_art += [56, 0, 48, 4]                   # crown -> cx+so
+    obj_art += [48, 4, 60, 2]                   # cx+so -> cx+c
+    obj_art += [60, 2, 10, 6]                   # cx+c -> cx+a
     obj_art += _CTL(OBJ_ART_END)
-    assert off_art_potion == 284, f'OBJ_ART_POTION drifted: {off_art_potion}'
+    assert off_art_vest_l0 == 284, f'OBJ_ART_VEST_L0 drifted: {off_art_vest_l0}'
 
-    # HELMET: the 2D outline with the notched base.
-    #   x offs: 0=-a 2=-x6 4=-x4 6=-x3 8=-x2 10=+a; + spill 38=+x2 40=+x3
-    #   42=+x4 44=+x6 (obj_Y[13..16], the lamp's spill convention)
-    #   y offs: 0=syt 2=dome(z13) 4=side-top(z10) 6=notch roof(z2) 8=syb
-    off_art_helmet = len(obj_art)
-    obj_art += [0, 8, 4, 8]                     # feet
-    obj_art += [8, 8, 38, 8]
-    obj_art += [42, 8, 10, 8]
-    obj_art += [4, 6, 4, 8]                     # notch walls
-    obj_art += [8, 6, 8, 8]
-    obj_art += [38, 6, 38, 8]
-    obj_art += [42, 6, 42, 8]
-    obj_art += [4, 6, 8, 6]                     # notch roofs
-    obj_art += [38, 6, 42, 6]
-    obj_art += [0, 4, 0, 8]                     # sides
-    obj_art += [10, 4, 10, 8]
-    obj_art += _CTL(OBJ_ART_ARM)
-    obj_art += [0, 4, 2, 2]                     # the dome: authority
-    obj_art += [2, 2, 6, 0]
-    obj_art += [6, 0, 40, 0]                    # flat top
-    obj_art += [40, 0, 44, 2]
-    obj_art += [44, 2, 10, 4]
-    obj_art += _CTL(OBJ_ART_END)
-    assert off_art_helmet == 344, f'OBJ_ART_HELMET drifted: {off_art_helmet}'
-
-    # VEST: the extruded shell's L1.  Rear edges sit 2b above their front
-    # copies; rear shoulders + scoop rear are the authority.
-    #   x offs: 0=-a 2=-w 4=-s 6=+s 8=+w 10=+a
-    #   y offs: 0=syt(rear sh.) 2=front sh. 4=armpit 6=scoop-front
-    #           8=scoop-rear 10=syb
+    # VEST L1 -- the old L0 outline (armpit flare + rounded corner kept)
+    # plus the same neck loop, straight rims.
     off_art_vest = len(obj_art)
-    obj_art += [2, 10, 8, 10]                   # bottom
-    obj_art += [0, 4, 2, 10]                    # waist slants
-    obj_art += [8, 10, 10, 4]
-    obj_art += [0, 0, 0, 4]                     # sides (to the rear top)
-    obj_art += [10, 0, 10, 4]
-    obj_art += [0, 2, 4, 2]                     # front shoulders
-    obj_art += [6, 2, 10, 2]
-    obj_art += [4, 2, 4, 6]                     # scoop sides, front
-    obj_art += [6, 2, 6, 6]
-    obj_art += [4, 0, 4, 8]                     # scoop rear stubs
-    obj_art += [6, 0, 6, 8]
-    obj_art += [4, 6, 6, 6]                     # scoop bottom, front
+    obj_art += [2, 28, 8, 28]                   # hem
+    obj_art += [42, 22, 2, 28]                  # waist slants
+    obj_art += [8, 28, 44, 22]
+    obj_art += [0, 18, 42, 22]                  # armpit flares
+    obj_art += [44, 22, 10, 18]
+    obj_art += [0, 6, 0, 18]                    # sides
+    obj_art += [10, 6, 10, 18]
+    obj_art += [4, 0, 4, 14]                    # scoop sides
+    obj_art += [6, 0, 6, 14]
+    obj_art += [4, 14, 6, 14]                   # neck: front rim
+    obj_art += [4, 8, 4, 14]                    # neck: depth stubs
+    obj_art += [6, 8, 6, 14]
     obj_art += _CTL(OBJ_ART_ARM)
-    obj_art += [0, 0, 4, 0]                     # rear shoulders: authority
-    obj_art += [6, 0, 10, 0]
-    obj_art += [4, 8, 6, 8]                     # scoop bottom, rear
+    # MONOTONIC L-to-R authority (2026-09-03): single ascending sweep.
+    obj_art += [0, 6, 46, 0]                    # L corner: cx-a -> cx-so
+    obj_art += [46, 0, 4, 0]                    # L shoulder -> scoop edge
+    obj_art += [4, 8, 6, 8]                     # NECK: back-of-neck rim
+    obj_art += [6, 0, 48, 0]                    # R shoulder (scoop -> cx+so)
+    obj_art += [48, 0, 10, 6]                   # R corner: cx+so -> cx+a
     obj_art += _CTL(OBJ_ART_END)
-    assert off_art_vest == 416, f'OBJ_ART_VEST drifted: {off_art_vest}'
+    assert off_art_vest == 412, f'OBJ_ART_VEST drifted: {off_art_vest}'
     obj_art += [0xFF] * (512 - len(obj_art))    # window B done
 
     # -- WINDOW C: THE CLOSE-RANGE TIERS (2026-08-31, "all objects appear
@@ -759,7 +801,8 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     #   x offs: 0=-a 2=-qa 4=-a3a 6=+a3a 8=+qa 10=+a
     #   y offs: 0=syt 2=cy-a 4=cy-qa 6=cy-a3a 8=cy+a3a 10=cy+qa 12=syb
     off_art_potl0 = len(obj_art)
-    obj_art += [4, 2, 6, 2]                     # top segment, under the stem
+    # (the top segment under the stem is GONE, Eben 2026-09-02 -- same
+    #  neck-opening cut as the L1 tier)
     obj_art += [0, 8, 2, 10]                    # lower arc
     obj_art += [2, 10, 4, 12]
     obj_art += [4, 12, 6, 12]
@@ -770,14 +813,35 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     obj_art += [4, 0, 4, 2]                     # stem sides
     obj_art += [6, 0, 6, 2]
     obj_art += _CTL(OBJ_ART_ARM)
-    obj_art += [0, 6, 2, 4]                     # exposed upper arc
-    obj_art += [2, 4, 4, 2]
-    obj_art += [6, 2, 8, 4]
-    obj_art += [8, 4, 10, 6]
-    obj_art += [4, 0, 6, 0]                     # stem top
+    # MONOTONIC L-to-R authority (2026-09-03): left arc, stem top across
+    # the neck, right arc -- the stem top belongs in the MIDDLE of the
+    # sweep (its x is cx-a3..cx+a3), not appended after the right arc
+    # (which ran the fused walker's cursor backward).
+    obj_art += [0, 6, 2, 4]                     # left arc: cx-a -> cx-qa
+    obj_art += [2, 4, 4, 2]                     #           cx-qa -> cx-a3
+    obj_art += [4, 0, 6, 0]                     # stem top across the neck
+    obj_art += [6, 2, 8, 4]                     # right arc: cx+a3 -> cx+qa
+    obj_art += [8, 4, 10, 6]                    #            cx+qa -> cx+a
     obj_art += _CTL(OBJ_ART_END)
     assert off_art_potl0 == 672, f'OBJ_ART_POTL0 drifted: {off_art_potl0}'
-    assert len(obj_art) == 740, f'art blob is {len(obj_art)} B, expected 740'
+
+    # HELMET L1 (Eben 2026-09-02): no base indentations -- one straight
+    # bottom -- and the top in THREE lines: a single armed diagonal per
+    # side plus the flat top.  Window C's last 32 bytes, to the byte.
+    #   y offs (helmet map): 0=syt 4=z10 12=syb; x: 0=-a 6=-x3 10=+a 40=+x3
+    off_art_helm_l1 = len(obj_art)
+    obj_art += [0, 12, 10, 12]                  # bottom
+    obj_art += [0, 4, 0, 12]                    # sides
+    obj_art += [10, 4, 10, 12]
+    obj_art += _CTL(OBJ_ART_ARM)
+    # MONOTONIC L-to-R authority (2026-09-03): left diagonal, top, right
+    # diagonal ASCENDING -- the fused walker's single column cursor.
+    obj_art += [0, 4, 6, 0]                     # dome: left diagonal (166->174)
+    obj_art += [6, 0, 40, 0]                    # top (174->184)
+    obj_art += [40, 0, 10, 4]                   # right diagonal (184->192)
+    obj_art += _CTL(OBJ_ART_END)
+    assert off_art_helm_l1 == 736, f'OBJ_ART_HELM_L1 drifted: {off_art_helm_l1}'
+    assert len(obj_art) == 768, f'art blob is {len(obj_art)} B, expected 768 (window C exactly full)'
     # OBJ_E IS A BYTE -- but it is an offset WITHIN a 256-byte window now,
     # and the walker's four abs,X reads get their window high byte SMC'd
     # per object (oa_rd0..3 in objects.s).  Windows: A = HEX + LAMP

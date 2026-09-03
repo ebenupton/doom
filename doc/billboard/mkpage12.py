@@ -70,12 +70,17 @@ ROWS=''
 for n in ('pillar','barrel','lamp','potion','helmet','stim','medikit','armour'):
     W,H,uri = png((OBJ|{k:v for k,v in POBJ.items()})[n]['lump']); sc=SC[n]; cells=''
     for lod in (0,1):
-        L,_ = ov_lines(n,lod)
+        # POTION IS SINGLE-TIER (Eben 2026-09-02: "disable L1 for
+        # potions") -- the L0 dodecagon draws at every size.
+        eff = 0 if (n == 'potion' and lod == 1) else lod
+        L,_ = ov_lines(n,eff)
         mg=len({round(abs(p[0]),4) for l in L for p in l[:2]})
         na=sum(1 for l in L if l[2]=='a')
-        cells += cell(draw(L,sc,(W,H,uri)), f'L{lod} on sprite',
+        t1 = f'L{lod} on sprite' if eff == lod else 'L1 DISABLED (= L0) on sprite'
+        t2 = f'L{lod} alone' if eff == lod else 'L1 DISABLED (= L0) alone'
+        cells += cell(draw(L,sc,(W,H,uri)), t1,
                       f'{len(L)} lines · {na} armed · {mg} |x|')
-        cells += cell(draw(L,sc), f'L{lod} alone', f'{2*mg} obj_X slots')
+        cells += cell(draw(L,sc), t2, f'{2*mg} obj_X slots')
     if n=='barrel':
         # The engine templates at the sizes they ACTUALLY run at.  OCT is
         # selected only when a >= OBJ_LOD_A = 12, i.e. H >= 33; H = 85 is a
@@ -108,8 +113,8 @@ DIMS='<table><thead><tr><th>object</th><th>h</th><th>half-width</th>'\
      '<th>half-depth</th><th>detail</th></tr></thead><tbody>'
 for n,det in (('stim','front cross 7×7 (decal); rear edge ×(D−d)/(D+d)'),
               ('medikit','front cross 11×11 (decal); rear edge ×(D−d)/(D+d)'),
-              ('armour','scoop ±3 to z 13; shoulders 3–13.5; sides 15.5'),
-              ('potion','bulb r 7 (sphere -> circle) + wide stem ±2, armed top'),
+              ('armour','outline: old L0 is the L1, L0 doubled with curved runs; the neck hole LOOPS (back-of-neck rim armed) (2026-09-02)'),
+              ('potion','bulb r 7 (sphere -> circle), neck OPEN into the wide stem ±2; SINGLE TIER -- the dodecagon at every size (2026-09-02)'),
               ('helmet','2D outline, base notched at ±[2,4]×2; dome via (6,13), top ±3 at 15')):
     o=POBJ[n]
     w = o.get('w') or o.get('r') or (max(x for x,_ in o['prof']) if 'prof' in o else o['arm'][0])

@@ -121,7 +121,7 @@ OBJ_RUN8 = OBJ_BITS + LAY_OBJ_BITS_LEN  ; per-ss-OCTET first object index
 ; exactly as before.
 ;   A: HEX 0, LAMP 52        B: BOX 0, POTION 28, HELMET 88, VEST 160
 ;   C: OCT 0, BOXL0 76, POTL0 160  (the near tiers; obj_lodh picks)
-LAY_N_OBJ_ART = 185                ; 740 B / 4 -- all three windows, both builds
+LAY_N_OBJ_ART = 192                ; 768 B / 4 -- three windows EXACTLY full (2026-09-02 re-tier)
 ; kind indices (the OBJ_ASP plane byte; k lives in obj_ktab -- the two
 ; tables MUST stay in step with doom_wireframe's _KTAB/_OBJ_KINDS)
 OBJ_K_HEX    = 0
@@ -134,13 +134,15 @@ OBJ_K_VEST   = 6
 ; per-template (window, start offset within it)
 OBJ_ART_HEX    = 0                 ; window A
 OBJ_ART_LAMP   = 52                ; window A
+OBJ_ART_HELM_L0 = 140              ; window A -- the hoplite (2026-09-02)
 OBJ_ART_BOX    = 0                 ; window B
-OBJ_ART_POTION = 28                ; window B
-OBJ_ART_HELMET = 88                ; window B
-OBJ_ART_VEST   = 160               ; window B
+OBJ_ART_VEST_L0 = 28               ; window B -- doubled outline + neck loop
+OBJ_ART_VEST   = 156               ; window B -- L1: old outline + neck loop
 OBJ_ART_OCT    = 0                 ; window C -- barrel, close range
 OBJ_ART_BOXL0  = 76                ; window C -- trapezoid + cross
-OBJ_ART_POTL0  = 160               ; window C -- dodecagon + wide stem
+OBJ_ART_POTL0  = 160               ; window C -- dodecagon + wide stem (the
+                                   ;   potion's ONLY tier since 2026-09-02)
+OBJ_ART_HELM_L1 = 224              ; window C -- 3-line top, straight base
 OBJ_ART_ARM = $FE                  ; entry: arm the FUSED authority run
 OBJ_ART_END     = $FF              ; entry: template finished
 ; The templates: 38 x (x1,y1,x2,y2) pre-doubled indices. They live in

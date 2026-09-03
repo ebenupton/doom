@@ -58,12 +58,16 @@ obj_b2:      .res 1
 obj_b3:      .res 1
 obj_dy:      .res 1
 obj_X:       .res 12                       ; 6 x s16 — the art x table
-obj_Y:       .res 36                       ; 18 x s16; MUST be obj_X + 12.
+obj_Y:       .res 52                       ; 26 x s16; MUST be obj_X + 12.
                                            ; 12 was the barrel's lid+base
-                                           ; ellipse ladder; 18 since the
-                                           ; pillar era -- the lamp/helmet
-                                           ; use 13 y + 4 spilled x slots
-                                           ; (doc/billboard).
+                                           ; ladder; 18 from the pillar era
+                                           ; (lamp/helmet: 13 y + 4 spilled
+                                           ; x); 26 since the 2026-09-02
+                                           ; re-tier -- the vest L0 uses
+                                           ; 15 y + 11 spilled x slots
+                                           ; (doc/billboard).  Slot maps
+                                           ; are PER KIND: each generator
+                                           ; owns its own y/spill split.
 obj_pu:      .res 1                       ; ladder-builder scratch: rounded
 obj_pb:      .res 5                       ;   product; magnitudes; loop
 obj_px:      .res 1                       ;   index across umul8
@@ -124,23 +128,24 @@ obj_ktab:                                  ; gap on banked (main, any bank)
 .pushseg
 .segment "VPTAB"
 obj_lodh:
-   .byte 33, $FF, 8, $FF, 24, 12, $FF
+   .byte 33, $FF, $FF, 24, 24, 12, 24      ; potion SINGLE-TIER + helmet/
+                                           ; vest re-tiered 2026-09-02
 obj_tpl_pg2:                               ; art window high byte, lo/hi tier
    .byte >OBJ_ART,        >(OBJ_ART+$200)  ; hex / OCT
    .byte >OBJ_ART,        >OBJ_ART         ; lamp
-   .byte >(OBJ_ART+$100), >(OBJ_ART+$200)  ; potion / dodecagon
-   .byte >(OBJ_ART+$100), >(OBJ_ART+$100)  ; helmet
+   .byte >(OBJ_ART+$200), >(OBJ_ART+$200)  ; potion: the dodecagon, ONLY
+   .byte >(OBJ_ART+$200), >OBJ_ART         ; helmet: L1 far / hoplite near
    .byte >(OBJ_ART+$100), >(OBJ_ART+$200)  ; box-stim / trapezoid+cross
    .byte >(OBJ_ART+$100), >(OBJ_ART+$200)  ; box-medikit
-   .byte >(OBJ_ART+$100), >(OBJ_ART+$100)  ; vest
+   .byte >(OBJ_ART+$100), >(OBJ_ART+$100)  ; vest: L1 far / L0 near
 obj_tpl_off2:                              ; start offset within the window
    .byte OBJ_ART_HEX,    OBJ_ART_OCT
    .byte OBJ_ART_LAMP,   OBJ_ART_LAMP
-   .byte OBJ_ART_POTION, OBJ_ART_POTL0
-   .byte OBJ_ART_HELMET, OBJ_ART_HELMET
+   .byte OBJ_ART_POTL0,  OBJ_ART_POTL0
+   .byte OBJ_ART_HELM_L1, OBJ_ART_HELM_L0
    .byte OBJ_ART_BOX,    OBJ_ART_BOXL0
    .byte OBJ_ART_BOX,    OBJ_ART_BOXL0
-   .byte OBJ_ART_VEST,   OBJ_ART_VEST
+   .byte OBJ_ART_VEST,   OBJ_ART_VEST_L0
 .popseg
 
 .pushseg
@@ -1214,13 +1219,24 @@ obj_btz:   .byte 17, 13                   ; cross bar half-thickness (y)
 SEG_CODE
 
 SEG_BANKC
-obj_hgx:   .byte 192, 128, 96, 64         ; helmet x mags /256 of a
-obj_hnx:   .byte 2, 4, 6, 8               ; their -side obj_X byte offs
-obj_hpx:   .byte 44, 42, 40, 38           ; +side offs (obj_Y[13..16] spill,
+obj_hgx:   .byte 192, 128, 96, 64, 166, 176   ; helmet x mags /256 of a
+                                           ;   (+fx 5.2, dxf 5.5: the 2026-
+                                           ;    09-02 hoplite flare + foot)
+obj_hnx:   .byte 2, 4, 6, 8, 46, 50       ; their -side obj_X byte offs
+obj_hpx:   .byte 44, 42, 40, 38, 48, 52   ; +side offs (obj_Y spill,
                                           ; the lamp's convention; +-a keep
                                           ; obj_X+0/+10 for obj_probe)
 SEG_CODE
-obj_vgy:   .byte 20, 89, 75, 52           ; vest y /256 of H: front shoulder,
+obj_vgy:   .byte 4, 5, 15, 30, 35, 45, 60, 69, 75, 90, 105, 175, 244
+                                           ; vest y /256 of H (2026-09-02
+                                           ; re-tier): corner-bow 16.75,
+                                           ; shoulder-end 16.7, side-top 16,
+                                           ; back-of-neck 15, its bow 14.7,
+                                           ; side-seam 14, scoop 13, front-
+                                           ; rim bow 12.4, armpit 12, flare-
+                                           ; bow 11, pit 10, waist-bow 5.4,
+                                           ; hem-end 0.8
+; (the old 4-frac line:  20, 89, 75, 52 -- front shoulder,
                                           ; armpit, scoop front, scoop rear
 
 ; ---- the boxes: y = {syt, syt + lid, syb}; x is the prologue's +-a.
@@ -1332,56 +1348,18 @@ obj_potion_xy:
    LDA #187
    JSR obj_mirror
    LDA #6                                  ; the stem sides -> obj_X 2/3:
-   STA obj_px                              ; wn far, a3 near (the vertex
-   LDY #4                                  ; snap -- exact joins)
-   LDX obj_lod
-   BEQ opt_wn
+   STA obj_px                              ; a3 (the dodecagon vertex snap
+   LDY #4                                  ; -- exact joins)
    LDA #69
    JSR obj_mirror
-   JMP opt_shared
-opt_wn:
-   LDA #73                                 ; wn = 2/7 (the 4-px neck)
-   JSR obj_mirror
-opt_shared:
-   LDA obj_lod
-   BEQ opt_far
    JMP opt_near
-opt_far:
-   LDY #8                                  ; syt -> y0, syb -> y4 (off 8)
-   JSR obj_ends
-   LDA obj_pb                              ; y1 = syb - 2qa (arc mid)
-   ASL A                                   ; qa <= 72, no carry out
-   STA obj_pu
-   SEC
-   LDA obj_yb_l
-   SBC obj_pu
-   STA obj_Y+2
-   LDA obj_yb_h
-   SBC #0
-   STA obj_Y+3
-   CLC
-   LDA obj_pb                              ; y2 = syb - (qa + a3a)
-   ADC obj_pb+2
-   STA obj_pu
-   SEC
-   LDA obj_yb_l
-   SBC obj_pu
-   STA obj_Y+4
-   LDA obj_yb_h
-   SBC #0
-   STA obj_Y+5
-   SEC
-   LDA obj_pb                              ; y3 = syb - (qa - a3a)
-   SBC obj_pb+2
-   STA obj_pu
-   SEC
-   LDA obj_yb_l
-   SBC obj_pu
-   STA obj_Y+6
-   LDA obj_yb_h
-   SBC #0
-   STA obj_Y+7
-   RTS
+; SINGLE-TIER (2026-09-03): obj_lodh pins the potion at tier 0 and BOTH
+; obj_tpl entries are POTL0, but this builder still forked on obj_lod --
+; tier 0 built the RETIRED far ladder (y offs 0-8, old semantics) under
+; the near template, leaving offs 10/12 STALE.  A stale off-12 y from an
+; earlier object made a reversed out-of-band vertical, and vplot's
+; armed-RTS ran off the unroll: the (585,-3437,244) crash.  The builder
+; is now unconditionally the POTL0 (dodecagon) ladder; the far arm died.
 opt_near:
 ; the dodecagon's y ladder: cy -+ {a, qa, a3a} with cy = syb - a, all
 ; expressed as syb minus a byte (the stem sides were mirrored above)
@@ -1447,45 +1425,26 @@ opt_near:
 ; the lamp/potion/vest builders: the 2026-08-31 trig restore needed
 ; the CODE bytes back) ----------------------------------------------------
 obj_helmet_xy:
+; 6 magnitudes since the hoplite (2026-09-02) -- obj_pb staged only 5,
+; so the two-pass stage-then-store went fused: obj_mirror computes and
+; stores each +- pair in one pass (the vest's pattern).
    LDA obj_a
    STA zp_mul_b
-   LDX #3
+   LDX #5
 ohx_m:
-   STX obj_px                              ; umul8 eats X
+   STX obj_pb
+   LDA obj_hpx,X
+   STA obj_px
+   LDY obj_hnx,X
    LDA obj_hgx,X
-   JSR umul8
-   LDX obj_px
-   LDA zp_prod_l
-   CMP #128
-   LDA zp_prod_h
-   ADC #0
-   STA obj_pb,X
+   JSR obj_mirror
+   LDX obj_pb
    DEX
    BPL ohx_m
-   LDX #3
-ohx_s:
-   LDY obj_hnx,X
-   SEC
-   LDA obj_cx_l
-   SBC obj_pb,X
-   STA obj_X+0,Y
-   LDA obj_cx_h
-   SBC #0
-   STA obj_X+1,Y
-   LDY obj_hpx,X
-   CLC
-   LDA obj_cx_l
-   ADC obj_pb,X
-   STA obj_X+0,Y
-   LDA obj_cx_h
-   ADC #0
-   STA obj_X+1,Y
-   DEX
-   BPL ohx_s
-   LDA obj_h                               ; y1..y3 = syt + H*{34,85,222}/256
-   STA zp_mul_b
-   LDX #2
-ohy_m:
+   LDA obj_h                               ; y1..y5 = syt + H*{34,85,162,
+   STA zp_mul_b                            ;   196,205}/256 (dome z13, side
+   LDX #4                                  ;   z10, eyehole roof, wall top,
+ohy_m:                                     ;   diagonal top)
    STX obj_px
    LDA obj_hgy,X
    JSR umul8
@@ -1507,31 +1466,40 @@ ohy_m:
    STA obj_Y+3,Y
    DEX
    BPL ohy_m
-   LDY #8
-   JMP obj_ends                            ; syt -> y0, syb -> y4 (off 8)
+   LDY #12
+   JMP obj_ends                            ; syt -> y0, syb -> y6 (off 12)
 SEG_BANKC
-obj_hgy:   .byte 34, 85, 222              ; y /256 of H: dome z13, side top
-                                          ; z10, notch roof z2
+obj_hgy:   .byte 34, 85, 162, 196, 205    ; y /256 of H: dome z13, side top
+                                          ; z10, eyehole roof 5.5, wall top
+                                          ; 3.5, diagonal top 3
 SEG_CODE
 
 ; ---- the vest: 6-x / 6-y (bank C: the near tiers filled CODE) ----------
 SEG_BANKC
 obj_vest_xy:
+; x pairs, TABLE-DRIVEN since the 2026-09-02 re-tier: 7 mirrored
+; magnitudes (waist 5.5, scoop 3, pit 10.5, shoulder-out 13.5, waist-bow
+; 8.7, crown/corner 8.25, corner-apex 14.9... see obj_vgx) + centre @62.
    LDA obj_a
    STA zp_mul_b
-   LDA #8                                  ; waist = 5.5/15.5 -> obj_X 1/4
-   STA obj_px
-   LDY #2
-   LDA #91
+   LDX #6
+ovx_m:
+   STX obj_pb                              ; loop index in the ladder
+   LDA obj_vpx,X                           ; scratch (obj_mirror eats
+   STA obj_px                              ; obj_pn, X and Y; obj_pn+1
+   LDY obj_vnx,X                           ; is obj_lod -- NOT scratch)
+   LDA obj_vgx,X
    JSR obj_mirror
-   LDA #6                                  ; scoop = 3/15.5 -> obj_X 2/3
-   STA obj_px
-   LDY #4
-   LDA #50
-   JSR obj_mirror
-   LDA obj_h                               ; y1..y4 = syt + H*{20,89,75,52}
+   LDX obj_pb
+   DEX
+   BPL ovx_m
+   LDA obj_cx_l                            ; cx -> offset 62 (the curved
+   STA obj_X+62                            ; hem/rim midpoints ride the
+   LDA obj_cx_h                            ; centre line)
+   STA obj_X+63
+   LDA obj_h                               ; y1..y13 = syt + H*obj_vgy/256
    STA zp_mul_b
-   LDX #3
+   LDX #12
 ovy_m:
    STX obj_px
    LDA obj_vgy,X
@@ -1554,8 +1522,19 @@ ovy_m:
    STA obj_Y+3,Y
    DEX
    BPL ovy_m
-   LDY #10                                 ; syt -> y0 (rear shoulders),
-   JMP obj_ends                            ; syb -> y5 (the ground line)
+   LDY #28                                 ; syt -> y0 (the crown line),
+   JMP obj_ends                            ; syb -> y14 (the ground line)
+SEG_BANKC
+obj_vgx:   .byte 91, 50, 173, 223, 144, 136, 246  ; vest x mags /256 of a:
+                                           ; +corner-apex 14.9 (slots
+                                           ; 58/60) -- the FULL-WIDTH-top
+                                           ; bug: the corner authority
+                                           ; lines read unwritten slots
+                                           ; waist 5.5, scoop 3, pit 10.5,
+                                           ; shoulder-out 13.5, waist-bow
+                                           ; 8.7, crown+corner-bow 8.25
+obj_vnx:   .byte 2, 4, 42, 46, 50, 54, 58  ; -side obj_X byte offs
+obj_vpx:   .byte 8, 6, 44, 48, 52, 56, 60  ; +side offs
 SEG_CODE
 
 ; ============================================================================

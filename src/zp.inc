@@ -652,6 +652,14 @@ zp_div_h = zp_prod_h ; [bsp+clip]
 .pushseg
 .segment "WORK"
 .global zp_br_px, zp_br_py       ; the DRIVER stages these (2026-09-01)
+.global pmt_blk                  ; pmove's survivor-replay block: LINKER-
+pmt_blk:     .res 13             ; allocated since 2026-09-02 -- it was a
+                                 ; baked $0ED0 in the "WORK free run",
+                                 ; and the obj_Y ladder growth slid
+                                 ; zp_br_px/py UNDER it (pm_frame stomped
+                                 ; the pose fractions; the bare_boot /
+                                 ; walkdrv / pm_fuzz triple-red).  The
+                                 ; free-note trap, again.
 fw_pol:      .res 1     ; 0.6 accesses/frame
 fwl_leftf:   .res 1     ; 2.3
 zp_br_px:    .res 1     ; 0.1 -- the 8.8 FRACTION of the player x; the

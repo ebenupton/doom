@@ -41,7 +41,7 @@ def main():
     OE = sym('obj_e', banked=1)
     OASP = sym('obj_asp', banked=1)
     KINDS = ('HEX','LAMP','POTION','HELMET','BOXS','BOXM','VEST')
-    TPL_OFF = ({0}, {52}, {28, 160}, {88}, {0, 76}, {0, 76}, {160})
+    TPL_OFF = ({0}, {52}, {160}, {224, 140}, {0, 76}, {0, 76}, {156, 28})
     n = collections.Counter(); last = [None]
     for (px, py, ab) in C.POSITIONS:
         r.render_frame(px, py, ab, dw.player_floor(px, py))
@@ -62,6 +62,39 @@ def main():
     got = dict(n)
     print(f'  stamps: {got}  (expect {EXPECT})')
     ok = got == EXPECT
+
+    # SLOT-COVERAGE GUARD (2026-09-03): an art template that references a
+    # generator-UNWRITTEN ladder slot draws an authority line from a
+    # garbage x (usually 0 = the screen edge) -- the vest's missing
+    # corner magnitude (slots 58/60) swept a full-width line across the
+    # armour room.  No object line may span more than a billboard's
+    # width; a garbage-slot line runs edge-to-edge.  Object-only lines =
+    # (objects-on) minus (objects-off) per pose.
+    from bsp_render_6502 import disable_objects
+    LIM = 140                         # px; the widest legit near-LOD art
+    worst = 0; wpose = None
+    for (px, py, ab) in C.POSITIONS:
+        # objects were seeded on at construction; render on, then off
+        r.render_frame(px, py, ab, dw.player_floor(px, py))
+        onl = set(r.sc.last_lines)
+        disable_objects(mem)
+        r.render_frame(px, py, ab, dw.player_floor(px, py))
+        offl = set(r.sc.last_lines)
+        # reseed objects for the next pose
+        _bits = dw.packed_layout['off_obj'] + 7 * dw.packed_layout['n_obj']
+        _anyb = sym('OBJ_ANYB', banked=1)
+        for i in range(dw.packed_layout['obj_bits_len']):
+            mem[_anyb + i] = dw.packed_rom_main[_bits + i]
+        for (x0, y0, x1, y1) in onl - offl:
+            span = max(abs(x0 - x1), abs(y0 - y1))
+            if span > worst:
+                worst = span; wpose = (px, py, ab, x0, y0, x1, y1)
+    print(f'  widest object-only line span: {worst}px (limit {LIM})')
+    if worst > LIM:
+        ok = False
+        print(f'    RUNAWAY LINE at {wpose[:3]}: ({wpose[3]},{wpose[4]})-'
+              f'({wpose[5]},{wpose[6]}) -- an art slot is unwritten')
+
     print('OBJDRAWS:', 'PASS' if ok else f'FAIL (got {got}, expect {EXPECT})')
     return 0 if ok else 1
 

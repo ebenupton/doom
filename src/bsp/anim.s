@@ -706,14 +706,15 @@ sqm:
 ; anim_init JSRs it, and ENG_SQR_FILL (the bare-boot driver's fill hook)
 ; resolves HERE (asmbuild engine-syms alias).
 SEG_PMB4
+.global pmt_blk
 sqr_fill_cold:
-; zero the pm survivor-replay block ($0ED0-$0EFF): engine-owned state
-; that used to ship as LOW-tail zeros; junk-RAM boots must not leak
-; into pmt_ok-class cold-init assumptions (2026-09-01)
-   LDX #$2F
+; zero the pm survivor-replay block (pmt_blk, LINKER-allocated since
+; 2026-09-02): engine-owned state that used to ship as LOW-tail zeros;
+; junk-RAM boots must not leak into pmt_ok-class cold-init assumptions
+   LDX #12
    LDA #0
 sqc_pmz:
-   STA $0ED0,X
+   STA pmt_blk,X
    DEX
    BPL sqc_pmz
    JSR sqr_fill

@@ -514,6 +514,15 @@ def blobs(flat=True):
     """
     import struct
     m = build()
+    import os as _os3
+    if _os3.environ.get('DOOM_TREE_SCREEN'):
+        # RENDER-ONLY tree screen (2026-09-03): candidate BSPs change the
+        # solid-seg census and blow the fixed collision homes.  Truncate
+        # the SOURCE list before any derived table is built -- collision
+        # becomes garbage, which the screen never exercises.
+        import abi as _abi3
+        if len(m['colsegs']) > _abi3.COL_N_SOLID:
+            del m['colsegs'][_abi3.COL_N_SOLID:]
     # flat homes = the TUBE parasite map ($7500-$82FF is the replaced
     # raster blob there; the flat py65 harness never installs these —
     # only drivers move the player). Banked homes = bank WALK free
@@ -674,10 +683,16 @@ def blobs(flat=True):
     #  and anim_init's copy-down is gone with them)
     if not flat:
         pass
-    # the asm dispatches on idx >= COL_N_SOLID (abi constant): pin it
-    import abi as _abi
-    assert len(m['colsegs']) == _abi.COL_N_SOLID, \
-        f'COL_N_SOLID {_abi.COL_N_SOLID} != {len(m["colsegs"])} — update gen_abi'
+    # the asm dispatches on idx >= COL_N_SOLID (abi constant): pin it.
+    # DOOM_TREE_SCREEN relaxes the pin for RENDER-ONLY measurement of
+    # candidate BSP trees (the solid census varies per tree; collision
+    # correctness is irrelevant to a render-cycle screen).  ADOPTING a
+    # tree still requires the gen_abi census update -- the relax is the
+    # overnight screening harness only (2026-09-03).
+    import os as _os2, abi as _abi
+    if not _os2.environ.get('DOOM_TREE_SCREEN'):
+        assert len(m['colsegs']) == _abi.COL_N_SOLID, \
+            f'COL_N_SOLID {_abi.COL_N_SOLID} != {len(m["colsegs"])} — update gen_abi'
     # home-range asserts (free-space windows audited 2026-08-14)
     assert len(cymin) <= 256 and len(cymax) <= 256, 'cy tables must stay one page (abs,Y prescreen)'
     # ONE geometry since the parasite re-cut (2026-09-02): the flat homes
