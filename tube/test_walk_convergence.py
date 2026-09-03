@@ -114,7 +114,9 @@ def copro_walk():
             for t in raw:
                 if skip:
                     skip -= 1
-                    assert t[3] == 0, f"HUD payload tuple not 00-padded: {t}"
+                    # the last tuple ends in the class byte (2026-09-04)
+                    assert t[3] == 0 or (skip == 0 and t[3] < 0xFE), \
+                        f"HUD payload tuple not 00-padded: {t}"
                 elif t == (0xFE,) * 4:
                     skip = 3
                 else:

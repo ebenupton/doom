@@ -5,7 +5,14 @@ Compares THE DISC ARTIFACTS -- the bytes that actually ship -- not any
 harness memory.  The parasite (CODE + DATA, the C02 build) must be a
 pure concatenation of the banked build's files:
 
-    CODE $0F00-$57FF   == LOWC, byte-identical up to link relocation
+    CODE $0F00-$57FF   == LOWC by PLACEMENT for the code segments (DRV,
+                          PMOVE, PMH, CODE, SHTAB start where the banked
+                          ones do; RWC/RWCARD follow CODE in order) and
+                          byte-for-byte for the tables (DRV, RWC, RWCARD,
+                          SHTAB).  Code CONTENTS may differ per build
+                          (Eben 2026-09-03/04): PAGE is BANKED-only, so
+                          the parasite carries NO ROMSEL store in any
+                          engine code segment -- asserted here.
     CODE $5800-$77FF   == bank A (BANK0) offsets $0000-$1FFF
     DATA $7C00-$95FF   == bank A offsets $2400-$3DFF (minus the staged
                           window $2400-$25FF, where bank A ships zeros)
@@ -44,6 +51,48 @@ for _ln in open(os.path.join(ROOT, 'build/engine_b1c1.map')):
 assert VPTAB_N, 'VPTAB not in the banked c02 map'
 
 
+def _segs(path):
+    out = {}
+    for ln in open(os.path.join(ROOT, path)):
+        m = _re.match(r'^(\w+)\s+00([0-9A-F]{4})\s+00([0-9A-F]{4})\s+00([0-9A-F]{4})', ln)
+        if m:
+            out[m.group(1)] = (int(m.group(2), 16), int(m.group(3), 16), int(m.group(4), 16))
+    return out
+
+
+def _syms(path):
+    out = {}
+    for ln in open(os.path.join(ROOT, path)):
+        m = _re.match(r'sym\s+id=\d+,name="([^"]+)",.*?val=0x([0-9A-F]+)', ln)
+        if m and not m.group(1).startswith('LOCAL-MACRO'):
+            out.setdefault(m.group(1), set()).add(int(m.group(2), 16))
+    return out
+
+
+BK_SEG = _segs('build/engine_b1c1.map')      # banked C02
+FL_SEG = _segs('build/engine_b0c1.map')      # flat C02 = the parasite
+LOW_CODE = ('PMOVE', 'PMH', 'CODE')          # engine code in the 22K
+LOW_TABLES = ('DRV', 'RWC', 'RWCARD', 'SHTAB')
+# THE LINKER'S OWN RELOCATION MAP: a banked address that is a symbol maps
+# to the same symbol's flat address.  Code contents differ per build
+# (PAGE stripped, .if ::BANKED arms), so every reference into the 22K
+# from a data block or bank C is checked against this, not a linear rule.
+_bs, _fs = _syms('build/engine_b1c1.dbg'), _syms('build/engine_b0c1.dbg')
+SYMMAP = {}
+for _n, _bv in _bs.items():
+    if _n in _fs and len(_bv) == 1 and len(_fs[_n]) == 1:
+        b, f = next(iter(_bv)), next(iter(_fs[_n]))
+        if b != f:
+            SYMMAP.setdefault(b, set()).add(f)
+HI_PAIRS = {(b >> 8, f >> 8) for b, fs_ in SYMMAP.items() for f in fs_ if (b >> 8) != (f >> 8)}
+# PAGE / PAGE_X / PAGE_Y as the banked build emits them: an immediate
+# load of a real bank number followed by the ROMSEL store.
+_BANKS = ''.join(chr(int(m.group(1))) for m in _re.finditer(r'^BANK_[A-Z_]+\s*=\s*(\d+)', open(os.path.join(ROOT, 'src/abi.inc')).read(), _re.M))
+assert _BANKS, 'no BANK_* equates in abi.inc'
+_B = _BANKS.encode('latin1')
+PAGE_RE = _re.compile(rb'(?:\xa9[' + _B + rb']\x8d|\xa2[' + _B + rb']\x8e|\xa0[' + _B + rb']\x8c)\x30\xfe', _re.S)
+
+
 def read_ssd(path):
     d = open(path, 'rb').read()
     n = d[SECTOR + 5] // 8
@@ -60,6 +109,9 @@ def read_ssd(path):
 
 def reloc_candidates(b):
     out = []
+    for k in range(4):                      # sym, sym+1 .. sym+3
+        for f in SYMMAP.get(b - k, ()):
+            out.append(f + k)
     if 0x8000 <= b < 0xC000:
         out.append(b - 0x2800)              # bank A laid at $5800
         out.append(b + 0x1600)              # bank B laid at $9600
@@ -91,6 +143,8 @@ def classify(diffs, bk, fl, base):
                 break
         if not ok and (fl[d] << 8) in reloc_candidates(bk[d] << 8):
             ok = True                       # lone page-hi byte
+        if not ok and (bk[d], fl[d]) in HI_PAIRS:
+            ok = True                       # lone page-hi byte of a symbol
         if not ok and d >= 1 and bk[d - 1] == 0xA9 and fl[d - 1] == 0xA9:
             # split immediate: LDA #<addr ... LDA #>addr (plotq_off's
             # plot_v aim).  Find the partner LDA within 8 bytes and try
@@ -146,8 +200,26 @@ def main():
                 i = a - base
                 print(f'    ${a:04X}: banked {bk[i]:02X} parasite {fl[i]:02X}')
 
-    # 1. the shared low image ($0F00-$57FF)
-    compare('22K   $0F00-$57FF', lowc, code[:len(lowc)], 0x0F00)
+    # 1. the shared low image ($0F00-$57FF): PLACEMENT for code, BYTES
+    #    for tables, and no ROMSEL store anywhere in engine code.
+    for n in LOW_CODE + LOW_TABLES:
+        bs, be, bsz = BK_SEG[n]; fs, fe, fsz = FL_SEG[n]
+        if n in ('PMH', 'RWC', 'RWCARD'):   # riders: PMH behind PMOVE, the
+            prev = {'PMH': 'PMOVE', 'RWC': 'CODE', 'RWCARD': 'RWC'}[n]   # tail
+            good = fs == FL_SEG[prev][1] + 1 and bs == BK_SEG[prev][1] + 1   # tables behind CODE
+        else:
+            good = fs == bs
+        print(f'  22K {n:6s}: banked ${bs:04X}-${be:04X} parasite ${fs:04X}-${fe:04X} '
+              f'{"in place" if good else "MOVED"}')
+        ok = ok and good
+        fl = code[fs - 0x0F00:fe + 1 - 0x0F00]
+        if n in LOW_CODE:
+            hit = PAGE_RE.search(fl)
+            if hit:
+                ok = False
+                print(f'    ROMSEL store in the parasite at ${fs + hit.start():04X}')
+        else:
+            compare(f'22K {n}', lowc[bs - 0x0F00:be + 1 - 0x0F00], fl, bs)
     # 2. bank A: $5800-$77FF from CODE, $7C00-$95FF from DATA
     compare('bankA $5800-$77FF', la[0x0000:0x2000], code[len(lowc):], 0x5800)
     assert not any(la[0x2000:0x2400]), 'bank A VXC window ships content'

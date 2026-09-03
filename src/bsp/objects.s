@@ -112,6 +112,11 @@ OBJ_MAXSLOT = 6                            ; most objects in one subsector
 .segment "RWC"                             ; rides the PMH -> CODE alignment
 obj_ktab:                                  ; gap on banked (main, any bank)
    .byte 23, 15, 25, 34, 30, 47, 58        ; (the pillar's 10 died with it)
+obj_gtab:                                  ; projected-height growth in
+   .byte 0, 0, 38, 38, 38, 38, 38          ; 256ths: pickups +15% (38/256
+                                           ; = 14.8%), barrel/lamp as drawn;
+                                           ; main RAM like obj_ktab (read
+                                           ; under any bank)
 .popseg
 ; (un-gated for the parasite re-cut 2026-09-02: flat draws the full
 ;  object set — bank C code links into the CBITS region)
@@ -128,14 +133,13 @@ obj_ktab:                                  ; gap on banked (main, any bank)
 .pushseg
 .segment "VPTAB"
 obj_lodh:
-   .byte 33, $FF, $FF, 18, 24, 12, 24      ; potion SINGLE-TIER + helmet/
+   .byte 33, $FF, $FF, 7, 24, 12, 24       ; potion SINGLE-TIER + helmet/
                                            ; vest re-tiered 2026-09-02;
-                                           ; helmet 24 -> 18 (2026-09-03,
-                                           ; Eben: DOUBLE the hoplite's
-                                           ; switch distance -- net of the
-                                           ; +1 quantum growth 2q -> 3q,
-                                           ; which alone moves it 1.5x:
-                                           ; 24 * 3/2 / 2 = 18)
+                                           ; helmet 24 -> 7 (2026-09-04,
+                                           ; Eben: the hoplite's switch
+                                           ; distance doubled TWICE = 4x,
+                                           ; net of the x1.15 growth:
+                                           ; 24 * 1.15 / 4 = 6.9)
 obj_tpl_pg2:                               ; art window high byte, lo/hi tier
    .byte >OBJ_ART,        >(OBJ_ART+$200)  ; hex / OCT
    .byte >OBJ_ART,        >OBJ_ART         ; lamp
@@ -540,6 +544,10 @@ obj_ds_go:
    LDA #255                                ; very near: clamp the scale
    STA obj_h
 obj_hok:
+   JSR obj_grow                            ; PICKUP GROWTH: H, yt scaled
+                                           ; per kind (see the routine at
+                                           ; the file tail; a JSR keeps the
+                                           ; obj_dsr branches in range)
 ; a = H * k / 64, k = the object's width ratio in 64ths.  A billboard's
 ; half width and its height both scale by the same 1/depth, so k is just
 ; 64*radius/height and no projection of the radius is needed.  The old
@@ -1585,3 +1593,36 @@ ok_done:
 ok_prev:  .byte 0
 ok_state: .byte 1                          ; 1 = objects OFF (the default,
                                            ; Eben 2026-09-02); press O for ON
+
+; --- obj_grow: the per-kind projected-height growth (JSR'd from the
+;     prologue at obj_hok; H in obj_h, yb in obj_yb_l/h) ---------------
+obj_grow:
+; PICKUP GROWTH (2026-09-04, Eben: +15%): scale the projected height by a
+; per-kind factor in 256ths BEFORE the width derives from it, so the
+; whole billboard grows rigidly (b stays linear in a); the base stays
+; put, yt = yb - H'.  This is where the growth has to live: the ZT/ZB
+; planes are 6.67 wu quanta and these figures are 2-3 quanta tall, so
+; no table height is within 15% of the ask.  g = 0 skips (barrel, lamp).
+   LDY obj_asp
+   LDA obj_gtab,Y
+   BEQ obj_grts
+   LDX obj_h
+   STX zp_mul_b
+   JSR umul8                               ; H * g (eats X, Y)
+   LDA zp_prod_l
+   ASL A                                   ; C = the rounding bit
+   LDA zp_prod_h
+   ADC obj_h                               ; H' = H + round(H*g/256)
+   BCC obj_gst
+   LDA #255                                ; very near: clamp as above
+obj_gst:
+   STA obj_h
+   SEC                                     ; yt = yb - H': base anchored
+   LDA obj_yb_l
+   SBC obj_h
+   STA obj_yt_l
+   LDA obj_yb_h
+   SBC #0
+   STA obj_yt_h
+obj_grts:
+   RTS

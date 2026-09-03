@@ -479,7 +479,7 @@ SKIPTO &F610
     TW 8                        \ after span_init
     JSR T_RENDER_FRAME          \ lines leave via the &F610+ emitters
     TW 9                        \ after render_frame -- THE big phase
-\ ---- HUD packet: FE FE FE FE + 12 payload bytes -----------------------
+\ ---- HUD packet: FE FE FE FE + 12 payload bytes (last = class code) ----
 \ The HOST draws the HUD, not the copro: the parasite has no framebuffer
 \ and no OS font ($C000 is its own DATA span), so it just ships its pose
 \ every frame and the H toggle lives host-side.  That also dodges the
@@ -513,7 +513,15 @@ ELSE
 ENDIF
     JSR esend1
     LDA fields      : JSR esend1    \ PAL fields this frame -> the HUD's F=
-    LDA #0          : JSR esend1
+\ The tuple's last byte carries the bbox-cache CLASS for the HUD's C
+\ letter (2026-09-04): the RAW low byte of the vectored bbox_visible
+\ entry bca_frame chose; the HOST decodes it against the exported class
+\ entries (dbox_check = D, bbox_check_angle = R, else P) exactly as
+\ src/hud.s does, so this costs the resident nothing.  build_tube_game
+\ asserts no class entry's low byte is FE/FF, which keeps the two jobs
+\ the 00 pad did: the packet stays 4-tuple aligned and no FF run can
+\ form through it.
+    LDA T_ZP_BV_ENTRY : JSR esend1
     LDX #4                      \ end of frame: FF FF FF FF
 .eof
     LDA #&FF

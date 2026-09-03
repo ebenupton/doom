@@ -51,8 +51,14 @@ RING = 0x3000                                  # wrh is masked &0F ORA &30
 # angidx 0x3D -> angle byte 0xF4; x = $FFE6.D2, y = $001D.E3
 PAYLOAD = [0x3D, 0xD2, 0xE6, 0x00,
            0xFF, 0xE3, 0x1D, 0x00,
-           0x00, 0x5C, 0x03, 0x00]      # 9 = TRIPWIRE latch, 10 = PAL fields
-EXPECT = "X=FFE6.D2 Y=001D.E3 R=F4 F=03"
+           0x00, 0x5C, 0x03, 0x00]      # 9 = TRIPWIRE latch, 10 = PAL fields,
+                                        # 11 = bbox-cache class (raw zp_bv_entry lo)
+EXPECT = "X=FFE6.D2 Y=001D.E3 R=F4 F=03 D"
+# the class byte is the packet's last: zp_bv_entry's raw low byte, decoded
+# against the class entries the generated syms file carries
+_syms = open(os.path.join(ROOT, 'tube', 'tube_syms.inc')).read()
+_lo = lambda n: int(re.search(rf'^{n} = &([0-9A-F]+)', _syms, re.M).group(1), 16) & 0xFF
+CLASS_CASES = ((0x00, 'P'), (_lo('T_BBOX_CHECK_ANGLE'), 'R'), (_lo('T_DBOX_CHECK'), 'D'))
 
 
 # Every character gets eight bytes of its own code, so a drawn cell
@@ -79,7 +85,7 @@ def decode(mem, base_page, n):
     return out
 
 
-def run_case(code, sym, font_base):
+def run_case(code, sym, font_base, cls=2, expect=EXPECT):
     mem = ObservableMemory()
     mem[0x1900:0x1900 + len(code)] = list(code)
     install_font(mem, font_base)
@@ -93,7 +99,7 @@ def run_case(code, sym, font_base):
     target_page = mem[sym['bufhi'] + 1]        # the buffer this frame draws into
 
     stream = ([10, 20, 30, 20] +               # one ordinary horizontal line
-              [0xFE] * 4 + PAYLOAD +           # the HUD packet
+              [0xFE] * 4 + PAYLOAD[:11] + [cls] +   # the HUD packet
               [0xFF] * 4)                      # end of frame
     for i, b in enumerate(stream):
         mem[RING + i] = b
@@ -112,8 +118,8 @@ def run_case(code, sym, font_base):
         return 1
 
     base = target_page << 8
-    got = decode(mem, target_page, len(EXPECT))
-    ok = got == EXPECT
+    got = decode(mem, target_page, len(expect))
+    ok = got == expect
     print(f'   drawn: "{got}"')
 
     # and with the HUD off, the row must be untouched
@@ -123,14 +129,14 @@ def run_case(code, sym, font_base):
     mem[RDL], mem[RDH] = RING & 0xFF, RING >> 8
     mem[WRL], mem[WRH] = (RING + len(stream)) & 0xFF, (RING + len(stream)) >> 8
     mem[DRAW], mem[PEND], mem[FREE], mem[EOFS] = 1, 0xFF, 2, 1
-    for i in range(len(EXPECT) * 8):
+    for i in range(len(expect) * 8):
         mem[base + i] = 0
     mpu.pc = sym['main']; mpu.sp = 0xFF
     for _ in range(2_000_000):
         if mpu.pc == sym['skipchk']:
             break
         mpu.step()
-    off_clean = not any(mem[base + i] for i in range(len(EXPECT) * 8))
+    off_clean = not any(mem[base + i] for i in range(len(expect) * 8))
     if not off_clean:
         print('  FAIL: the HUD drew with huden = 0')
     ok = ok and off_clean
@@ -147,10 +153,11 @@ def main():
     # by the Master case. tools/test_hud_font.py gates the probe that
     # chooses between them.
     for name, base in (('Model B  $C000', 0xC000), ('Master   $F900', 0xF900)):
-        print(f'-- font at {name} --')
-        ok = run_case(code, sym, base)
-        print(f'   {"ok" if ok else "FAILED"}')
-        allok = allok and ok
+        for cls, letter in CLASS_CASES:
+            print(f'-- font at {name}, class {letter} --')
+            ok = run_case(code, sym, base, cls, EXPECT[:-1] + letter)
+            print(f'   {"ok" if ok else "FAILED"}')
+            allok = allok and ok
     print('HOSTT-HUD: ' + ('PASS' if allok else 'FAIL'))
     return 0 if allok else 1
 

@@ -1717,18 +1717,12 @@ def _obj_kind(r, h, kind):
 # THE CANDELABRA IS GONE (Eben, 2026-08-31): it borrowed the floor lamp
 # for a while, but thing 35 now packs nothing at all.
 _LAMP = _obj_kind(11.5, 48, K_LAMP)
-# PICKUPS GROWN ONE HEIGHT QUANTUM (Eben, 2026-09-03: "scale helmets,
-# armour, potions and big/little med kits up by 25%").  Billboard heights
-# live in the engine's prescaled height unit (40/6 = 6.67 wu per quantum)
-# and these figures are only 2-3 quanta tall, so a x1.25 factor is BELOW
-# the resolution: helmet 15 -> 18.75 wu rounds to the same 2-3q as before
-# on every floor phase, and the vest/potion only move on some floors.
-# The smallest faithful step is exactly +1 quantum on every instance,
-# added in prescaled units so no floor phase can eat it (+33% on a 3q
-# figure, +50% on a 2q one).  The base is zb = the floor and only zt
-# moves, so the figure grows UPWARD from its anchor; width follows
-# height through the per-kind k, so the whole billboard scales.  Lamp
-# and barrel keep their sizes.
+# PICKUP GROWTH IS IN THE ENGINE (2026-09-04, Eben: +15%, was +25%):
+# billboard heights are stored in the prescaled height unit (40/6 = 6.67
+# wu per quantum) and these figures are only 2-3 quanta tall, so no table
+# height is within 15% of the ask -- objects.s scales the PROJECTED height
+# per kind (obj_gtab, 256ths) before the width derives from it, base
+# anchored.  The table heights below are the sprite boxes, unchanged.
 _OBJ_KINDS = {2011: _obj_kind(7, 15, K_BOXS),       # Stimpack
               2012: _obj_kind(14, 19, K_BOXM),      # Medikit
               2014: _obj_kind(7, 18, K_POTION),     # Health potion
@@ -1737,7 +1731,6 @@ _OBJ_KINDS = {2011: _obj_kind(7, 15, K_BOXS),       # Stimpack
               2019: _obj_kind(15.5, 17, K_VEST),    # Blue armour (same art)
               2028: _LAMP,                          # Floor lamp
               2035: _obj_kind(11.5, 32, K_HEX)}     # Barrel (BAR1A0 23x32)
-_OBJ_GROW_Q = {K_BOXS: 1, K_BOXM: 1, K_POTION: 1, K_HELMET: 1, K_VEST: 1}
 # THE ARMOUR ROOM IS THE ARMOUR'S (Eben, 2026-09-01): the green-armour
 # zigzag room kept its 4 potions + 2 helmets as clutter around the prize;
 # all six go, the armour stays.  Keyed by exact (thing, x, y) so a map
@@ -1752,10 +1745,12 @@ _ARMOUR_ROOM_DROP = {(2014, 144, -3136), (2014, 144, -3328),
                      (2028, 528, -3312), (2028, 528, -3152),
                      (2015, 432, -3040), (2015, 432, -3424)}
 # ADDED THINGS (2026-09-03, Eben): two floor lamps flanking the opening
-# onto the steps east of the courtyard, in line with the wall ends at
-# (2112,-2560) and (2112,-2304) -- the HUD readings 006F.63/0055.28 and
-# 006F.E1/0076.3E.  Same (x, y, angle, type, flags) shape as a WAD thing.
-_ADDED_THINGS = [(2094, -2567, 0, 2028, 0), (2094, -2302, 0, 2028, 0)]   # one x: the pair reads as a matched flank
+# onto the steps east of the courtyard.  Each is CENTRED IN Y on the end
+# cap of the wall it stands by -- the 32-unit segments at x=2112 spanning
+# y -2592..-2560 (linedef 411) and -2304..-2272 (linedef 401) -- at one
+# shared x, 18 units off the cap face (lamp r 11.5 clears it by 6.5).
+# Same (x, y, angle, type, flags) shape as a WAD thing.
+_ADDED_THINGS = [(2094, -2576, 0, 2028, 0), (2094, -2288, 0, 2028, 0)]
 fp_objects = []
 for _th in list(things) + _ADDED_THINGS:
     _tx, _ty_, _ta, _tt, _tfl = _th
@@ -1774,7 +1769,7 @@ for _th in list(things) + _ADDED_THINGS:
         # now (obj_ktab), so the byte is just the kind.
         asp=_kind,
         zb=_prescale_height(_fz),
-        zt=_prescale_height(_fz + _h) + _OBJ_GROW_Q.get(_kind, 0)))
+        zt=_prescale_height(_fz + _h)))
 fp_objects.sort(key=lambda o: o['ss'])           # 6502 scans a run per ss
 
 packed_rom_main, packed_rom_detail, packed_rom_recip, packed_bbox_table, packed_layout = build_packed(

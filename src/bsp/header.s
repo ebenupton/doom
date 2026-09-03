@@ -220,26 +220,37 @@ NF_LLEAF = $40                          ; left child is a subsector
 ; (bbox_visible, bcac_index, the seg_xform vrcache indexers):
 .assert (VRCACHE_BASE & $FF) = 0, error, "VRCACHE_BASE must be page-aligned"
 
-; PAGE emits in BOTH builds since 2026-09-02 (the flat-first-class
-; purge): on the parasite $FE30 is inert copro RAM, so the banked
-; ROMSEL writes are harmless bytes -- and the 22K stays BYTE-identical
-; (every page site used to be a 4-5 byte divergence).
+; PAGE is BANKED-ONLY (Eben, 2026-09-04: "don't do ROMSEL writes in the
+; parasite").  It emitted in both builds from 2026-09-02 to keep the 22K
+; byte-identical, which over-read the concatenation rule: the flat build
+; is the banked BLOCKS in the same PLACES, and their contents may differ
+; per build.  On the copro every site was 6 dead cycles (~163 stores,
+; ~980 cycles a frame measured on the copro gate).  Flat now emits
+; nothing -- so on the parasite A/X/Y and the flags SURVIVE a PAGE that
+; kills them on the host: never rely on either (compute verdicts after,
+; reload the register).
 .macro PAGE bank
+.if ::BANKED
    LDA #bank
    STA $FE30
+.endif
 .endmacro
 
 ; PAGE_X / PAGE_Y: as PAGE but clobber X / Y instead of A — lets a
-; value RIDE A across a bank switch (flags still die: the immediate
-; load sets N/Z — compute verdicts AFTER the page, not before).
+; value RIDE A across a bank switch (flags still die on the host: the
+; immediate load sets N/Z — compute verdicts AFTER the page, not before).
 .macro PAGE_X bank
+.if ::BANKED
    LDX #bank
    STX $FE30
+.endif
 .endmacro
 
 .macro PAGE_Y bank
+.if ::BANKED
    LDY #bank
    STY $FE30
+.endif
 .endmacro
 
 ; RNS_SELECT — pick the vectored round-to-nearest shifter and patch
