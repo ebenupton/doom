@@ -246,10 +246,14 @@ at_notwb:
    CMP #$40
    BEQ at_up                               ; 1: A -> B
 ; --- 3: B -> A (pos -= speed, clamp at min = CFG+0) ---
-   ZERO D_FWD                              ; geometry moves THIS frame:
-                                        ; forward-coherence bbox serves
-                                        ; would inherit stale occlusion
-                                        ; (D + anims gate, 2026-08-13)
+; (The D_FWD gate that zeroed the forward-coherence class on travelling
+; frames died 2026-09-03: it dated from the D cache that served whole
+; has_gap verdicts.  Today's dbox_check stores only angle-derived state
+; -- code 1 = angle cull, else the box's x-extent -- and runs has_gap
+; LIVE on every serve, so mover heights never enter a cached byte.  The
+; gate was costing the D class on ~half of all walking frames, since
+; the lifts cycle perpetually.  FB-identity gate with anims ticking on
+; both twins: dwalk_bench --anim.)
    INC at_moved                            ; travelling => DIRTY at at_done
    LDA at_fields
    STA at_c
@@ -284,7 +288,6 @@ at_jdone:
 
 at_up:
 ; --- 1: A -> B (pos += speed, clamp at max = CFG+2) ---
-   ZERO D_FWD                              ; (mirror of the B->A gate)
    INC at_moved                            ; travelling => DIRTY at at_done
    LDA at_fields
    STA at_c

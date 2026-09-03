@@ -50,6 +50,9 @@ ap.add_argument('--stride', type=float, default=None)
 ap.add_argument('--overhead', type=int, default=0)
 ap.add_argument('--trace', default=None)
 ap.add_argument('--verbose', action='store_true', help='per-frame lines')
+ap.add_argument('--anim', action='store_true',
+                help='run anim_init once and anim_tick every frame on BOTH twins '
+                     '(movers cycle as on the disc; ANIM_FIELDS = the fields moved)')
 ap.add_argument('--dfwd-fields', action='store_true',
                 help='write the field count (not 1) into D_FWD on forward frames')
 ARGS = ap.parse_args()
@@ -434,6 +437,14 @@ def main():
         patch_refresh_mask(pmem, ARGS.mask)      # twin never probes; parity anyway
     if ARGS.nostraddle:
         patch_straddle_recompute(mem)
+    ANIM_FIELDS = sym('ANIM_FIELDS', banked=1)
+    ANIM_INIT, ANIM_TICK = sym('anim_init', banked=1), sym('anim_tick', banked=1)
+    def anim(r, entry):
+        m = r.sc.mpu.memory; save = m[0xFE30]; m.select(BANK_STATE)
+        r.sc._run(entry); m.select(save)
+    if ARGS.anim:
+        for r in (eng, prs):
+            anim(r, ANIM_INIT)
     tracers = None
     if ARGS.trace:
         tracers = (hook_tracer(eng), hook_tracer(prs))
@@ -459,6 +470,11 @@ def main():
         except StopIteration:
             break
         mem[D_FWD] = (mover.fields(cyc) if (ARGS.dfwd_fields and fwd and cyc) else fwd)
+        if ARGS.anim:                       # movers advance identically on both twins
+            f = mover.fields(cyc) if cyc else 1
+            for r in (eng, prs):
+                r.sc.mpu.memory[ANIM_FIELDS] = f
+                anim(r, ANIM_TICK)
         try:
             fz = dw.player_floor(px, py)
         except Exception:
