@@ -84,7 +84,7 @@ OBJ_DRAW = 1                            ; static-object billboards.  ON
                                         ; cannot yet express (it speaks
                                         ; single-line tightens only).
                                         ; Set 0 to get a green gate back.
-LAY_N_OBJ   = 52                   ; static objects (wad_packed):
+LAY_N_OBJ   = 50                   ; static objects (wad_packed):
                                    ; 2026-09-01 the armour-room strip
                                    ; took 58 -> 52; ONE value since the
                                    ; parasite re-cut — the flat legacy

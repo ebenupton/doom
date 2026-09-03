@@ -128,8 +128,14 @@ obj_ktab:                                  ; gap on banked (main, any bank)
 .pushseg
 .segment "VPTAB"
 obj_lodh:
-   .byte 33, $FF, $FF, 24, 24, 12, 24      ; potion SINGLE-TIER + helmet/
-                                           ; vest re-tiered 2026-09-02
+   .byte 33, $FF, $FF, 18, 24, 12, 24      ; potion SINGLE-TIER + helmet/
+                                           ; vest re-tiered 2026-09-02;
+                                           ; helmet 24 -> 18 (2026-09-03,
+                                           ; Eben: DOUBLE the hoplite's
+                                           ; switch distance -- net of the
+                                           ; +1 quantum growth 2q -> 3q,
+                                           ; which alone moves it 1.5x:
+                                           ; 24 * 3/2 / 2 = 18)
 obj_tpl_pg2:                               ; art window high byte, lo/hi tier
    .byte >OBJ_ART,        >(OBJ_ART+$200)  ; hex / OCT
    .byte >OBJ_ART,        >OBJ_ART         ; lamp
