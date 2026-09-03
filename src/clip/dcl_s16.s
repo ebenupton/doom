@@ -507,6 +507,17 @@ y_in_range:
    CMP zp_line_yr_l
    BEQ rejected
 dispatch_dcl:
+   LDA zp_line_yr_l                        ; the drawer's A-rides contract
+                                        ; (2026-09-03: this seam was MISSED
+                                        ; by 815da4f — A arrived as xl from
+                                        ; the ordering CMP, so every s16-
+                                        ; clipped sloped line got dy = xl-yl;
+                                        ; a line clipped to the u8 floor with
+                                        ; xl == yl read as FLAT, the CB walk
+                                        ; found no exit through the span
+                                        ; bottom, and the raw yr = 255 went to
+                                        ; the rasteriser: the vplot arm then
+                                        ; landed in CODE — the 21:34 wedge)
    BIT FW_MODE
    BMI dd_fused
    JSR draw_clipped_line

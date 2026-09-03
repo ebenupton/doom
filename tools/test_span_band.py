@@ -78,6 +78,12 @@ def main():
     # arm 2: witness renders — every trapped plot in-band
     mem[0xFE30] = 0
     POSES = [(1604.46875, -2487.15625, 252),   # the Model B KIL pose
+             (75.375, -3308.28125, 4),         # the 2026-09-03 21:34 wedge: dispatch_dcl
+                                               # entered the drawer with A = xl, dy = 0 on
+                                               # a line clipped to the u8 floor; the CB
+                                               # walk read it FLAT and emitted yr = 255
+                                               # (207 unbiased) -> vplot armed its RTS
+                                               # in main CODE, the rasteriser wrote bank C
              (1000, -3160, 156),               # the BL=241 witness
              (1792.34375, -3351.375, 108),
              (-486, -3307, 243)]
