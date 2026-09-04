@@ -520,8 +520,9 @@ VEXPL_CONT = $EE00                      ; linear ($9800 banked)
 ; (VDONE moved next to VRCACHE_VALID 2026-07-26 — see below; $0600 is
 ; fully FREE again.)
 
-; Vertex transform cache: per-vertex saved view + projection results.
-; Skip redundant transforms when multiple segs share a vertex.
+; VRCACHE — the per-vertex RECIP + SCREEN-X cache (the "R" is the recip r,
+; not "rotation": the ROTATION is what VXCACHE holds).  Skips redundant
+; projection when several segs share a vertex.
 ; Fields: rhi, rlo, sx_lo, sx_hi (s16 projected screen X), near-clip
 ; flag — one plane each (see below). EV16 (2026-08-09): the s8 evy/evx
 ; planes DIED — near verdicts serve from CLIP, and the crossing

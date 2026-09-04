@@ -97,10 +97,8 @@ def zp_entries(text):
         if RES.match(lines[k]):
             if cur: entries.append(cur)
             cur = [lines[k]]
-        elif cur is not None and (lines[k].strip().startswith(';') or not lines[k].strip()):
-            cur.append(lines[k])
-        else:
-            if cur: entries.append(cur); cur = None
+        elif cur is not None:
+            cur.append(lines[k])            # see zp_shuffle: equates travel too
     if cur: entries.append(cur)
     return lines, a, b, entries
 
@@ -128,10 +126,11 @@ def zp_shuffle(text, rng):
         if RES.match(lines[k]):
             if cur: entries.append(cur)
             cur = [lines[k]]
-        elif cur is not None and (lines[k].strip().startswith(';') or not lines[k].strip()):
+        elif cur is not None:
+            # comments, blank lines AND member equates ('hi = base+1') belong
+            # to the reservation above them and must travel with it
             cur.append(lines[k])
         else:
-            if cur: entries.append(cur); cur = None
             tail.append((k, lines[k]))
     if cur: entries.append(cur)
     rng.shuffle(entries)
@@ -207,17 +206,34 @@ def bisect_zp(wt, zp_src, base, seed, log):
         log('  bisect: the full shuffle passes now — nothing to localise')
         return
     log(f'  bisect: {len(cur)} moved entries fail ({why})')
+    # ddmin: halves first, then complements, then finer granularity — this
+    # isolates INTERACTIONS (two symbols that must not separate), which a
+    # plain halving bisect stalls on.
+    gran = 2
     while len(cur) > 1:
-        half = len(cur) // 2
-        for part in (cur[:half], cur[half:]):
+        chunk = max(1, len(cur) // gran)
+        parts = [cur[i:i + chunk] for i in range(0, len(cur), chunk)]
+        for part in parts:                       # a subset that still fails
             ok, why2 = test(part)
             if not ok:
-                cur, why = part, why2
+                cur, why, gran = part, why2, 2
                 log(f'    -> {len(cur)} entries still fail ({why})')
                 break
         else:
-            log(f'    irreducible at {len(cur)} entries (interaction); stopping')
-            break
+            for k, part in enumerate(parts):     # a complement that still fails
+                comp = [x for j, p2 in enumerate(parts) if j != k for x in p2]
+                if not comp:
+                    continue
+                ok, why2 = test(comp)
+                if not ok:
+                    cur, why, gran = comp, why2, max(2, gran - 1)
+                    log(f'    -> {len(cur)} entries still fail (complement, {why})')
+                    break
+            else:
+                if gran >= len(cur):
+                    log(f'    minimal at {len(cur)} entries')
+                    break
+                gran = min(len(cur), gran * 2)
     names = [zp_name(entries[i]) for i in cur]
     log(f'  CULPRIT SET ({len(cur)}): {names}   [{why}]')
 
@@ -231,6 +247,10 @@ def main():
     ap.add_argument('--keep', action='store_true', help='keep the worktree on failure')
     ap.add_argument('--bisect', type=int, default=None,
                     help='localise a failing zp seed to a minimal entry set')
+    ap.add_argument('--swap', default=None,
+                    help='zp: swap named entries pairwise, A,B[,C,D...] — the '
+                         'precise probe (a one-entry subset is a no-op, so the '
+                         'bisect can never reduce below a pair on its own)')
     ARGS = ap.parse_args()
 
     wt = os.path.join(os.environ.get('TMPDIR', '/tmp'), f'layout_fuzz_{os.getpid()}')
@@ -245,6 +265,26 @@ def main():
         print(f'baseline: {len(base)} poses, {sum(c for _, c in base):,} cycles')
 
         zp_src = open(os.path.join(wt, 'src/zp.inc')).read()
+        if ARGS.swap:
+            names = ARGS.swap.split(',')
+            _, _, _, entries = zp_entries(zp_src)
+            idx = {zp_name(e): i for i, e in enumerate(entries)}
+            missing = [n for n in names if n not in idx]
+            if missing:
+                print('unknown entries:', missing); return 1
+            order = list(range(len(entries)))
+            for a2, b2 in zip(names[0::2], names[1::2]):
+                order[idx[a2]], order[idx[b2]] = idx[b2], idx[a2]
+            open(os.path.join(wt, 'src/zp.inc'), 'w').write(zp_apply(zp_src, order))
+            ok, err = build(wt)
+            if not ok:
+                print(f'  swap {names}: BUILD FAIL  {err}'); return 1
+            got, err = render(wt, 'swap.json')
+            if got is None:
+                print(f'  swap {names}: RENDER FAIL  {err}'); return 1
+            bad = [i for i, (g, b) in enumerate(zip(got, base)) if g[0] != b[0]]
+            print(f'  swap {names}: ' + ('PIXELS DIFFER at ' + str(bad) if bad else 'ok'))
+            return 1 if bad else 0
         if ARGS.bisect is not None:
             bisect_zp(wt, zp_src, base, ARGS.bisect, lambda m: print(m, flush=True))
             return 0

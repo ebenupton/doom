@@ -33,7 +33,7 @@
 ;         [0, 255] by the caller; hi <= lo = empty = no-op.
 ;         zp_head = active span list (sorted by XSTART, disjoint).
 ; Output: every open column in [lo, hi) removed; freed slots pushed
-;         on the free list; zp_head updated; zp_hg_cache invalidated.
+;         on the free list; zp_head updated.
 ;         Clobbers A,X,Y, zp_prev, zp_tmp0.
 ;
 ; Callers: bsp/seg_emit.s (solid-seg arm) + bsp/tfr consumers via
@@ -66,7 +66,6 @@ span_mark_solid:
 ; slots, and a stale cached slot's leftover XSTART/XEND can overlap
 ; any later query (observed: freed slot (60,69) made has_gap(60,73)
 ; return 1 against a pool whose only live span was (121,132)).
-   ZERO zp_hg_cache
 ; NO EMPTY-RANGE GUARD (removed 2026-08-22 with the tie-drop). The
 ; CALLER guarantees ilo < ihi: both staging paths in bsp/seg_emit.s
 ; cull sx1 >= sx2 (the fast path's BCS cull_jmp, the straddle

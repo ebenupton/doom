@@ -761,13 +761,12 @@ SEG_BANKC
 ; COPIES: anchor (fwl_xl, fwl_dx), values (fwl_yl, fwl_yr), extremes
 ; (fwl_lo, fwl_hi). No interpolation, by decree. No merging (the walk
 ; is suspended; fused_merge_range coalesces at seg end). Invalidates
-; zp_hg_cache. Pool exhaustion on a split: the split is skipped and the
+; Pool exhaustion on a split: the split is skipped and the
 ; whole span takes the boundary (conservative; the corpus never
 ; exhausts).
 ; ============================================================================
 fused_apply_run:
 .scope
-   ZERO zp_hg_cache                                                       ;# ||||       0.5
    LDX fw_rslot                            ; run-open slot (see fw_rslot) ;# ||         0.3
 ar_walk:
    BNE ar_go                                                              ;# |||||      0.7
@@ -1018,7 +1017,6 @@ fm_pair:
    LDA zp_free                                                            ;# |          0.1
    STA POOL_NEXT,Y                                                        ;# |          0.2
    STY zp_free                                                            ;# |          0.1
-   ZERO zp_hg_cache                                                       ;# |          0.2
    PLA                                                                    ;# |          0.1
    TAY                                                                    ;#            0.1
    BNE fm_chk                                                             ;# |          0.1

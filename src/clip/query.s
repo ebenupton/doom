@@ -20,7 +20,7 @@
 ; Output: C = verdict (C=1 gap / C=0 none) — C-ONLY since 2026-07-26;
 ;         A returns the caller's hi VALUE-PRESERVED; Z, N UNDEFINED,
 ;         V untouched (load-bearing — see the ABI block below).
-;         Clobbers X,Y; may update zp_hg_cache (slot of the hit span).
+;         Clobbers X,Y.
 ; Callers: bsp/bbox.s (bbox visibility probe, via bca's fused JMP
 ; exits) and bsp/seg_emit.s (hg_query seg prelude) — direct JSR/JMP
 ; (has_gap lives in main RAM, no paging needed); harness.
@@ -82,22 +82,12 @@ span_has_gap:
 ; the four LDA #0/#1 exit loads died with it.
 ; Return 1 if any active span overlaps the range, 0 otherwise. Spans
 ; are sorted by xstart.
-; Coherence cache: check last-CANDIDATE span first (saves full walk).
-; Cache probe: if the cached slot overlaps [ilo,ihi], answer 1 without
-; walking. The walk stores its candidate slot unconditionally (hit OR
-; fail — see the hit checks); only a positive PROBE shortcuts, so a
-; cached non-overlapper is harmless. (mark_solid / tighten zero the
-; cache, so a live cached slot always holds current XSTART/XEND.)
-   LDX zp_hg_cache
-   BEQ hg_no_cache
-   CMP POOL_XSTART,X                       ; strict xs < hi: C=(hi>=xs),
-   BEQ hg_no_cache                         ; equality demoted (edge-touch)
-   BCC hg_no_cache
-   LDY POOL_XEND,X
-   CPY zp_i_l                              ; strict xe > lo: BCC + BEQ
-   BCC hg_no_cache                         ; demote (CPY abs,X does not
-   BEQ hg_no_cache                         ; exist, so no reversal here)
-   RTS                                     ; hit: C=1 from the CPY
+; (The last-CANDIDATE coherence cache lived here until 2026-09-05.  It
+;  probed the cached slot before walking and hit 60-70% of the time, but
+;  a MISS walks only 1.8 spans on average, so two compares of probe cost
+;  about what the walk costs: measured 0.20% of the suite and 0.43% of the
+;  heavy frame FASTER without it.  A second candidate would have made that
+;  worse, not better.)
 hg_no_cache:
 ; Unrolled 2× ping-pong: X and Y alternate as the current span offset.
 ; Eliminates the TAX in the skip path (−2.5 cyc per skip iteration avg).
@@ -144,13 +134,11 @@ hgn0:
 ; so no later span can overlap either — with the xs == hi edge-touch
 ; demoted to no-gap via the shared CLC exit (strict half-open).
 hg_chk_x:
-   STX zp_hg_cache
    LDA zp_hg_ihi                           ; A = ihi back (verdict + ABI)
    CMP POOL_XSTART,X                       ; C = (hi >= xs): the verdict,
    BEQ hgn_clc                             ; equality demoted via the
    RTS                                     ; shared CLC exit (its LDA is
 hg_chk_y:                                  ; redundant-but-harmless here)
-   STY zp_hg_cache
    LDA zp_hg_ihi                           ; (mirror)
    CMP POOL_XSTART,Y
    BEQ hgn_clc

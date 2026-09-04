@@ -30,7 +30,6 @@
 ;           XSTART=TXLO=BXLO=0, XEND=TDEN=BDEN=255 (XEND exclusive),
 ;           TL=TR=OT=IT=Y_BIAS (48), BL=BR=OB=IB=Y_BIAS+159 (207)
 ;           (screen-space Y is stored BIASED: visible [0,159] -> [48,207])
-;         zp_hg_cache = 1 (has_gap coherence cache primed to the span).
 ; Clobbers A,X.  Python mirror: EndpointClipSpans.__init__.
 ; ======================================================================
 ; The pool is a PARTITION: live list + free list = every slot, always
@@ -113,7 +112,6 @@ si_setup:
    STA POOL_OB,X
    STA POOL_IB,X
 ; | OB=IB=Y_BIAS+159
-   STX zp_hg_cache                         ; init cache to the screen span's slot
 ; FUSED walker state (2026-08-25): FW_MODE MUST be 0 before the first
 ; un-armed draw or it misroutes into the walker — the page is RAM and
 ; holds GARBAGE at boot on hardware (the zeroed-py65 harness hides it;

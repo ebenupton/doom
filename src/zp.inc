@@ -281,7 +281,6 @@
 .globalzp obj_yb_l
 .globalzp obj_yb_h
 .globalzp fw_ax1
-.globalzp zp_hg_cache
 .globalzp zp_i_x0
 .globalzp zp_i_y0
 .globalzp LC_M_R0
@@ -608,7 +607,8 @@ obj_t:                      .res 1 ; ROTATED IN 2026-09-04 (zprotate): 35.1
                                    ; accesses/frame vs val_hi's 1.9.  RENAMED
                                    ; IN PLACE -- $CC/$CD/$C8 are hand-baked
                                    ; equates that a shift would collide.
-zp_hg_cache:                .res 1 ; [clip]; has_gap coherence cache: last-matching span offset
+   .res 1                               ; FREE (zp_hg_cache, the
+                                        ; has_gap candidate, retired 2026-09-05)
 zp_i_x0:                    .res 1 ; [clip]
 zp_i_y0:                    .res 1 ; [clip]
 LC_M_R0:                    .res 1 ; [clip]
