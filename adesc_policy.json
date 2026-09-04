@@ -1,5 +1,5 @@
 {
- "comment": "always-descend (node,boxside) sites \u2014 tools/adesc_big.py over the 277,441-position inside corpus x4 angles; strict never-worse criterion",
+ "comment": "always-descend (node,boxside) sites \u2014 tools/adesc_big.py over the 277,441-position inside corpus x4 angles; strict never-worse criterion  STALE as of 2026-09-04: these node ids are from the 2026-08-20 tree. 48afe0f swapped the WAD for polish_c30 and renumbered the nodes, and [206,1] is past the 194 live nodes (it lands in the plane padding), so re-baking with DOOM_ADESC_ON would arm the WRONG sites. The bake is off by default anyway \u2014 DSGN b2/b3 are the walk's dynamic always-descend bits now, and the static policy measured a net loss against them. Re-sweep before trusting this list again.",
  "corpus": "build/inside_corpus.txt",
  "frames": 1109764,
  "level": "leaf-1-fine",
