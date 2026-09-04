@@ -361,17 +361,17 @@ obj_rwp:
 ; --- + the frame's translation ref (vertex pipeline's own ref add) ---
    CLC
    LDA zp_br_vx_l
-   ADC vxcache_ref_x+0
+   ADC vrcache_ref_x+0
    STA zp_br_vx_l
    LDA zp_br_vx_h
-   ADC vxcache_ref_x+1
+   ADC vrcache_ref_x+1
    STA zp_br_vx_h
    CLC
    LDA zp_br_vy_l
-   ADC vxcache_ref_y+0
+   ADC vrcache_ref_y+0
    STA zp_br_vy_l
    LDA zp_br_vy_h
-   ADC vxcache_ref_y+1
+   ADC vrcache_ref_y+1
    STA zp_br_vy_h
 ; --- near clip: behind iff vy < 16 counts (the seg pipeline's test) ---
    BMI obj_ret

@@ -6,7 +6,7 @@
 \   the byte shuffling), sends RUN HOSTT raw over R2 (no reply wait —
 \   the host program never returns to the Tube service loop), then JMPs
 \   the resident block and is never entered again.  It squats the flat
-\   VXCACHE X-plane BSS (&7800-&7BFF): dead code there is fine BECAUSE
+\   VRCACHE X-plane BSS (&7800-&7BFF): dead code there is fine BECAUSE
 \   it is dead — the planes are runtime state the engine may write, which
 \   is exactly why nothing RESIDENT can live in this hole (the 2026-09-02
 \   esend1-misland: the emitters lived here and sxv0_rwpb wrote a vertex
@@ -48,7 +48,7 @@ RESIDENT=&F600                  \ the resident block's home (and entry:
                                 \ it opens with JMP init)
 
 \ =====================================================================
-\ BOOT — transient, &7800-&7BFF (the VXCACHE X-plane hole; dead after
+\ BOOT — transient, &7800-&7BFF (the VRCACHE X-plane hole; dead after
 \ the JMP RESIDENT below, and the engine is free to trample it)
 \ =====================================================================
 ORG &7800
@@ -119,7 +119,7 @@ ORG &7800
 \ and VPTAB ($F900) -- the two documented exceptions to the linear
 \ bank-C map -- live above the OS floor, which the LOADs (running
 \ through the live OS) cannot write.  The DATA file carries them
-\ STAGED at $7C00-$7DFF (flat VXCACHE Y-plane BSS, dead until the
+\ STAGED at $7C00-$7DFF (flat VRCACHE Y-plane BSS, dead until the
 \ engine runs; the engine then tramples the stage freely).  Copy up
 \ now: the OS has served its last call (the R2 RUN went raw),
 \ interrupts are off, and the $FFFA+ hardware vectors stay intact.
@@ -258,11 +258,11 @@ SKIPTO &F610
 \ (the RCACHE_STATE zeroing loop died 2026-09-04 with the extent cache)
                                 \ (A = 0, X = 0 still — rides into vxinit)
 .vxinit
-    STA T_VXCACHE_STATE,X       \ whole bitmap page (VRCACHE_VALID +
-    INX                         \ VDONE + VXCACHE_VALID)
+    STA T_VRCACHE_STATE,X       \ whole bitmap page (VXCACHE_VALID +
+    INX                         \ VDONE + VRCACHE_VALID)
     BNE vxinit
-    LDA #1                      \ VXCACHE ON -- by construction (Eben
-    STA T_VXCACHE_ENABLE        \ 2026-09-02): the flat planes own the
+    LDA #1                      \ VRCACHE ON -- by construction (Eben
+    STA T_VRCACHE_ENABLE        \ 2026-09-02): the flat planes own the
                                 \ full bank-A-hole $7800-$7FFF now that
                                 \ VDESC/sincos moved to the reclaimed
                                 \ client-OS 1K ($F800/$FA00)

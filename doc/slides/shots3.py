@@ -23,6 +23,8 @@ def spans():
         out.append({k: mem[a+s] for k,a in P.items()} | {'slot': s}); s = mem[P['NEXT']+s]; n+=1
     return out
 def snap(): return list(PLOTTED)   # ideal endpoints, not pixels
+FB, FBLEN = 0x5800, 0x1400
+def fb(): return bytes(mem[FB:FB+FBLEN]).hex()   # the real raster at this moment
 POSE = (float(sys.argv[1]), float(sys.argv[2]), int(sys.argv[3]))
 shots=[]
 def prof(entry, max_cycles=900000):
@@ -37,18 +39,18 @@ def prof(entry, max_cycles=900000):
             PLOTTED.append((mem[RZ['X0']],mem[RZ['Y0']],mem[RZ['X1']],mem[RZ['Y1']]))
         if pc==WALK and first:
             first=False
-            shots.append(dict(tag='start', n=0, obj=False, lines=snap(), spans=spans(), cyc=mpu.processorCycles))
+            shots.append(dict(tag='start', n=0, obj=False, lines=snap(), fb=fb(), spans=spans(), cyc=mpu.processorCycles))
         if pc==OBJSLOT: obj=True
         if pc==MS:
             nms += 1
             shots.append(dict(tag=f'close-{nms}', n=nms, obj=obj, lo=mem[IL], hi=mem[IH],
-                              lines=snap(), spans=spans(), cyc=mpu.processorCycles))
+                              lines=snap(), fb=fb(), spans=spans(), cyc=mpu.processorCycles))
         mpu.step()
     sc.last_cycles=mpu.processorCycles; sc.total_cycles+=mpu.processorCycles
     return mpu.processorCycles
 sc._run=prof
 cyc = r.render_frame(POSE[0], POSE[1], POSE[2], dw.player_floor(POSE[0], POSE[1]))
-shots.append(dict(tag='final', n=999, obj=True, lines=snap(), spans=spans(), cyc=cyc))
+shots.append(dict(tag='final', n=999, obj=True, lines=snap(), fb=fb(), spans=spans(), cyc=cyc))
 json.dump(dict(pose=POSE, cyc=cyc, shots=shots), open(sys.argv[4], 'w'))
 print(f'{cyc:,} cyc, {len(shots)} snapshots')
 for s in shots: print(f"  {s['tag']:10s} {len(s['spans']):2d} spans  cyc {s['cyc']:7,}")

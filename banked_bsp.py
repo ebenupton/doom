@@ -9,7 +9,7 @@ copy its 64K into a BankedMemory, then patch the banked deltas:
   - clipper (span_clip_bankc.bin) + rasteriser -> bank C @ $8000/$A800
   - sqr tables -> low RAM $1C00 (banked clipper/bsp umul8 read them there)
   - bsp_render code -> the *_bk.bin variants (PAGE inserts + $80xx clip entries)
-Everything else (recip/bbox/angle subsystem/vrcache) stays flat (above the
+Everything else (recip/bbox/angle subsystem/vxcache) stays flat (above the
 $8000-$BFFF window) — reachable in the model; real-HW relocation is a later step.
 """
 import os, math
@@ -40,7 +40,7 @@ def build_banked(flatr):
     # Build the banked engine BEFORE reading its bins: without this, the
     # region loop below loads whatever a PREVIOUS process linked — every
     # consumer ran one build behind its sources (caught 2026-07-10 when a
-    # vxcache negative-test alternated PASS/FAIL run-to-run).
+    # vrcache negative-test alternated PASS/FAIL run-to-run).
     import asmbuild
     asmbuild.build('engine', banked=1)
     fmem = flatr.sc.mpu.memory
@@ -146,7 +146,7 @@ def build_banked(flatr):
     assert len(rast) <= RASTER_BUDGET, f'rasteriser {len(rast)} bytes overruns VPLOTC at $AE00'
     roff = RASTER_OFF - 0x8000
     c[roff:roff + len(rast)] = rast
-    # VXCACHE fat-path planes are BSS at $9700-$A2D3, directly below the raster code @ $A300 (the
+    # VRCACHE fat-path planes are BSS at $9700-$A2D3, directly below the raster code @ $A300 (the
     # clipper must stay below $9700 — guarded here). Must be seeded BEFORE
     # define_bank: it COPIES the image into a fresh buffer.
     assert len(clip) <= 0x1800, f'clipper {len(clip)} bytes reaches VEXPL_CONT at $9800'
@@ -182,7 +182,7 @@ def build_banked(flatr):
     assert _art_d % 256 == 0, 'OBJ_ART windows must be page-aligned'
     c[_art_d:_art_d + _art_n] = rom_main[_art_off:_art_off + _art_n]
 
-    # (VXCACHE_CODE moved to main $2B00 2026-07-10 — loads via the generic region loop)
+    # (VRCACHE_CODE moved to main $2B00 2026-07-10 — loads via the generic region loop)
     if os.path.exists('bsp_render_hud_bk.bin'):
         hud = open('bsp_render_hud_bk.bin', 'rb').read()
         c[_csym('HUD_ENTRY', banked=1)-0x8000 : _csym('HUD_ENTRY', banked=1)-0x8000 + len(hud)] = hud
@@ -244,7 +244,7 @@ def build_banked(flatr):
     # blob router below). SS_CNT (the 2026-08-29 PG/CNT split) rides the
     # same loop to its own bank-B page at $B500 (the free pair below the DIR
     # planes; $A900 REJECTED: reads catching the window mid bank-C raster
-    # excursion saw raster state there — vxcache warm mismatches).
+    # excursion saw raster state there — vrcache warm mismatches).
     _nss = layout['n_ss']
     for _nm, _off in (('ROM_SS_FH_C', layout['off_ss_fh']),
                       ('ROM_SS_CH_C', layout['off_ss_ch']),
@@ -310,7 +310,7 @@ def build_banked(flatr):
     _ab.build('engine', banked=1, c02=_ab.env_c02())
     for addr, fn in _regions(banked=1):
         if fn.startswith('span_clip') or fn == 'bsp_render_hud_bk.bin':
-            continue    # clipper + HUD -> BANK_C (rc/anim/vxcache/sel are main now)
+            continue    # clipper + HUD -> BANK_C (rc/anim/vrcache/sel are main now)
         if os.path.exists(fn):
             d = open(fn, 'rb').read()
             for i, b in enumerate(d):

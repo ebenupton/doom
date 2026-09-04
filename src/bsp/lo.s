@@ -222,11 +222,11 @@ rp_recip:
 ; ============================================================================
 ; cr_recover — recover one endpoint's s16 count totals from its vertex
 ; key (EV16 2026-08-09; TRUE16 2026-08-10). total := rns(rot(w),3) +
-; ref_c — the same join the fetch computes (SXV_BODY vxcache_on), so
+; ref_c — the same join the fetch computes (SXV_BODY vrcache_on), so
 ; recovery is bit-identical to the transform that produced the
-; endpoint's clip verdict, in BOTH vxcache modes: the base is a pure
+; endpoint's clip verdict, in BOTH vrcache modes: the base is a pure
 ; function of (vertex, angle epoch) and ref is staged unconditionally
-; by vxcache_frame.
+; by vrcache_frame.
 ;   In:  A = idx_l, X = idx_b (senior side bit $20); any bank —
 ;        cr_plain pages L2 itself (warm serves need no paging at all).
 ;   Out: zp_br_vx_l/h, zp_br_vy_l/h = totals (s16 counts).
@@ -251,43 +251,43 @@ cr_cp:                                     ; the zp_cr block (zp.inc order
 
 cr_recover:
 .scope
-; ---- VXCACHE-aware claw-back (2026-08-09): when the translation cache is
+; ---- VRCACHE-aware claw-back (2026-08-09): when the translation cache is
 ; on and holds this vertex, serve base counts from the planes + ref
 ; (~70cyc) instead of the full fetch+rotate (~330). Bit-identical BY
 ; CONSTRUCTION (the TRUE16 join: every tier computes base_c + ref_c).
 ; Cold does NOT birth — recovery is read-only, so cache state
-; invariants (vxcache_check/walkseq) are untouched; the rare cold
+; invariants (vrcache_check/walkseq) are untouched; the rare cold
 ; crossing just pays the plain path like before. ----
-   LDY zp_vxcache_on
+   LDY zp_vrcache_on
    BEQ cr_plain                            ; cache off -> plain
    STA zp_div_l                            ; idx_l stash (div scratch, dead
    AND #7                                  ;  until the t divide)
    TAY
    LDA vc_bit_mask,Y
-   AND VXCACHE_VALID,X                         ; VALID is main RAM — no paging
+   AND VRCACHE_VALID,X                         ; VALID is main RAM — no paging
    BEQ cr_cold
    LDY zp_div_l                            ; Y = idx_l (planes are MAIN
    TXA                                     ; since 2026-08-09 — the PAGE_Y
                                            ; BANK_C/L2 pair died)
    AND #$20
    BNE cr_w_hi
-   LDA VXCACHE_XLO,Y                           ; warm: base counts -> the
+   LDA VRCACHE_XLO,Y                           ; warm: base counts -> the
    STA zp_br_vx_l                          ; working slots (junior side)
-   LDA VXCACHE_XHI,Y
+   LDA VRCACHE_XHI,Y
    STA zp_br_vx_h
-   LDA VXCACHE_YLO,Y
+   LDA VRCACHE_YLO,Y
    STA zp_br_vy_l
-   LDA VXCACHE_YHI,Y
+   LDA VRCACHE_YHI,Y
    STA zp_br_vy_h
    JMP cr_ref
 cr_w_hi:
-   LDA VXCACHE_XLO+$100,Y                      ; senior side twins
+   LDA VRCACHE_XLO+$100,Y                      ; senior side twins
    STA zp_br_vx_l
-   LDA VXCACHE_XHI+$100,Y
+   LDA VRCACHE_XHI+$100,Y
    STA zp_br_vx_h
-   LDA VXCACHE_YLO+$100,Y
+   LDA VRCACHE_YLO+$100,Y
    STA zp_br_vy_l
-   LDA VXCACHE_YHI+$100,Y
+   LDA VRCACHE_YHI+$100,Y
    STA zp_br_vy_h
    JMP cr_ref                              ; counts ARE the working form
                                            ; (TRUE16: the <<2 widen DIED)
@@ -323,17 +323,17 @@ cr_ref:
 ; expansions live inside SXV_BODY's macro scopes, unreachable from here)
    CLC
    LDA zp_br_vx_l
-   ADC vxcache_ref_x+0
+   ADC vrcache_ref_x+0
    STA zp_br_vx_l
    LDA zp_br_vx_h
-   ADC vxcache_ref_x+1
+   ADC vrcache_ref_x+1
    STA zp_br_vx_h
    CLC
    LDA zp_br_vy_l
-   ADC vxcache_ref_y+0
+   ADC vrcache_ref_y+0
    STA zp_br_vy_l
    LDA zp_br_vy_h
-   ADC vxcache_ref_y+1
+   ADC vrcache_ref_y+1
    STA zp_br_vy_h
    RTS
 .endscope
@@ -392,7 +392,7 @@ cr_ref:
 ; VX2 -> VX1 wholesale — evy/evx/clip always; sx + front sy pair (same
 ; subsector => same fh/ch) + rhi/rlo when unclipped — then project just
 ; the flag-gated back pair with the vertex's recip restored. ep = 0 set
-; by the caller. Replaces the whole VRCACHE hit path + 2 VYCACHE lookups.
+; by the caller. Replaces the whole VXCACHE hit path + 2 VYCACHE lookups.
 ; ============================================================================
 ; (History: LO-resident body until 2026-07-17, then a macro in
 ; inline.s; moved BODILY into subsector.s at its single site

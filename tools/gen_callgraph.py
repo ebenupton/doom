@@ -45,7 +45,7 @@ MACRO_OWNERS = {                      # CPM_ENTRY expansions (ang/bca.s)
 # for in-routine macros like cross_compute was).
 MACRO_CALLERS = {
     'SXV_BODY':  ['sx_vert_lo', 'sx_vert_hi'],
-    'vxcache_frame': ['view_setup'],   # single expansion (view setup)
+    'vrcache_frame': ['view_setup'],   # single expansion (view setup)
     'apv_stage': ['bf_seg_front'],    # emit-cascade expansions
     'ap_edges':  ['bf_seg_front'],
 }
@@ -84,7 +84,7 @@ extra = {'back_face_test','bf_seg_front','s_advance','vc_miss',
  # (s_advance_l0 dropped 2026-08-13: hoisted above seg_proc in subsector.s
  #  as a fall-through loop-tail label — same invisible-closure treatment
  #  as seg_proc itself)
- 'vxcache_arm_lo','vxcache_arm_hi','br_to_view','bbox_check_angle','box_classify',
+ 'vrcache_arm_lo','vrcache_arm_hi','br_to_view','bbox_check_angle','box_classify',
  'dbox_check','bt_store','bca_tail_postrc','render_subsector',
  'br_project_x','project_y','rns_go','slope_div_le','cp_havepsi',
  'render_frame','view_setup','br_init_frame','anim_tick','anim_init',
@@ -151,7 +151,7 @@ MOD = lambda f: ('bsp' if '/bsp/' in f else 'ang' if '/ang/' in f
                  else 'clip' if '/clip/' in f else 'hud')
 COLORS = {'bsp':'#dbe9ff','ang':'#ffe9d6','clip':'#e2f5df','hud':'#f2e2f5'}
 HOT = {'render_subsector','sx_vert_lo','sx_vert_hi','back_face_test',
- 'br_to_view','project_y','br_project_x','vxcache_arm','umul8','interp_store',
+ 'br_to_view','project_y','br_project_x','vrcache_arm','umul8','interp_store',
  'rns_go','render_frame','span_has_gap','draw_clipped_line_s16',
  'draw_clipped_line_s16_h','bf_seg_front','bbox_check_angle','box_classify',
  'dbox_check','bcls_s0','bcls_s1',

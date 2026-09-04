@@ -202,7 +202,7 @@ ROM_SS_CH_C = ROM_SS_FH_C + $100
 ; n_nodes*16 bytes); growing the flat header blob slid BPAL onto the
 ; rcache plane RC_PH_0 at $A400 (flat blob end has ZERO slack); banked
 ; $A900 sees bank-C raster state at $A9xx in the same window (warm
-; vxcache reads caught it). Banked home: $B500 (free pair below the DIR
+; vrcache reads caught it). Banked home: $B500 (free pair below the DIR
 ; planes), read under WALK with the other SS planes. Flat home: the free
 ; page between the node SoA end and the bbox planes.
 ROM_SS_CNT_C = BANKB_ORG + $3500

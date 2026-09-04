@@ -22,6 +22,8 @@ r=BankedBspRender(dw.packed_layout,dw.packed_rom_main,dw.packed_rom_detail,dw.pa
 sc=r.sc; mpu=sc.mpu; mem=mpu.memory
 PLOTTED=[]                      # every line the engine has rastered so far
 def snap(): return list(PLOTTED)  # ideal endpoints, not pixels
+FB, FBLEN = 0x5800, 0x1400
+def fb(): return bytes(mem[FB:FB+FBLEN]).hex()   # the real raster at this moment
 def spans():
     out=[]; s=mem[HEAD]; n=0
     while s and n<40:
@@ -40,14 +42,14 @@ def prof(entry,max_cycles=900000):
             sc.last_lines.append((0,0,0,0))
             PLOTTED.append((mem[RZ['X0']],mem[RZ['Y0']],mem[RZ['X1']],mem[RZ['Y1']]))
         if cur is not None and wsp is not None and mpu.sp >= wsp+2:
-            cur['after']=spans(); cur['lines_after']=snap(); lines.append(cur); cur=None; wsp=None
+            cur['after']=spans(); cur['lines_after']=snap(); cur['fb_after']=fb(); lines.append(cur); cur=None; wsp=None
         if pc==WALK:
             if cur:
-                cur['after']=spans(); cur['lines_after']=snap(); lines.append(cur)
+                cur['after']=spans(); cur['lines_after']=snap(); cur['fb_after']=fb(); lines.append(cur)
             wsp=mpu.sp
             cur=dict(line={k:mem[v] for k,v in FWL.items() if k in ('xl','xr','yl','yr','dx','lo','hi')},
                      side=('bot' if mem[SIDE]&0x80 else 'top'), steps=[], before=spans(),
-                     lines_before=snap(), cyc0=mpu.processorCycles)
+                     lines_before=snap(), fb_before=fb(), cyc0=mpu.processorCycles)
         elif cur is not None:
             if pc==CS:
                 x=mem[SLOT]
@@ -68,7 +70,7 @@ def prof(entry,max_cycles=900000):
         if cur is not None and 'after' not in cur and pc==CLOSE:
             pass
     if cur:
-        cur['after']=spans(); cur['lines_after']=snap(); lines.append(cur)
+        cur['after']=spans(); cur['lines_after']=snap(); cur['fb_after']=fb(); lines.append(cur)
     sc.last_cycles=mpu.processorCycles; sc.total_cycles+=mpu.processorCycles
     return mpu.processorCycles
 sc._run=prof

@@ -465,7 +465,7 @@ NUM_SLOTS = 32
 ; bytes and record the old scheme).
 ; (TOP_RECORDS/BOT_RECORDS moved to zp.inc 2026-08-09 — the arm sites
 ; in bsp/seg_emit.s used to HARDCODE #$07/$0700 because the equates
-; were clip-unit-local; the silent-collision that bit the VXCACHE-planes
+; were clip-unit-local; the silent-collision that bit the VRCACHE-planes
 ; move. One registry now.)
 REC_BYTES = 6                           ; bytes per record
 REC_VERDICT_ABOVE = 0

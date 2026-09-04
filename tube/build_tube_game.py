@@ -203,9 +203,9 @@ def write_tube_syms():
         if _twv:
             f.write(f"T_TW_CHECK = &{fsym('tw_check'):04X}\n")
             f.write(f"T_ZP_TW = &{fsym('zp_tw'):04X}\n")
-        f.write(f"T_VXCACHE_STATE = &{abi.VXCACHE_STATE:04X}\n")
-        f.write(f"T_VXCACHE_LEN = &{abi.VXCACHE_STATE_LEN:02X}\n")
-        f.write(f"T_VXCACHE_ENABLE = &{abi.VXCACHE_ENABLE:04X}\n")
+        f.write(f"T_VRCACHE_STATE = &{abi.VRCACHE_STATE:04X}\n")
+        f.write(f"T_VRCACHE_LEN = &{abi.VRCACHE_STATE_LEN:02X}\n")
+        f.write(f"T_VRCACHE_ENABLE = &{abi.VRCACHE_ENABLE:04X}\n")
         f.write(f"T_BCA_AB = &{fsym('bca_ab'):04X}\n")
         f.write(f"SPAWN_ANGIDX = {SPAWN_ANGIDX}\n")
         f.write(f"SPAWN_PXF = &{px88 & 0xFF:02X}\n")
@@ -263,7 +263,7 @@ def main():
     # contiguous; the cache block is runtime-only and never shipped.
     import abi as _abi
     # THE PARASITE LOAD GEOMETRY (2026-09-02, resident re-cut): CODE is
-    # everything below the $7800-$7BFF hole (the flat VXCACHE X-plane BSS
+    # everything below the $7800-$7BFF hole (the flat VRCACHE X-plane BSS
     # -- the transient BOOT stub squats it, so neither load may touch it),
     # DATA everything above, INCLUDING the resident glue at $F600-$F7FF.
     CODE_LO, CODE_HI = _abi.LOW_BASE, 0x7800
@@ -320,7 +320,7 @@ def main():
     # and VPTAB ($F900) -- the two documented exceptions to the LINEAR
     # bank-C map -- live above the OS floor, which the copro's *LOADs
     # cannot write (they run through the live client OS).  Ship them
-    # STAGED at $7C00-$7DFF (flat VXCACHE Y-plane BSS, zero in the image
+    # STAGED at $7C00-$7DFF (flat VRCACHE Y-plane BSS, zero in the image
     # and dead until the engine runs); the boot stub copies them up after
     # its last OS call.
     assert fsym('VEXPL_LO') == 0xF800, 'stage copy expects VEXPL at $F800'
@@ -332,10 +332,10 @@ def main():
 
     # ---- the ONE dual-mode disc (banked side built above) ----
     # PHASE4 LANDED (2026-09-02, resident re-cut): the esend1-misland was
-    # the flat VXCACHE X-planes ($7800-$7BFF) writing over emitters that
+    # the flat VRCACHE X-planes ($7800-$7BFF) writing over emitters that
     # lived in their BSS.  The resident glue moved to $F600-$F7FF (top of
     # memory, inside DATA); only the transient BOOT stub borrows the
-    # X-plane hole; VXCACHE is disabled on the copro (its Y-planes map
+    # X-plane hole; VRCACHE is disabled on the copro (its Y-planes map
     # onto VDESC/sincos -- see tubedrv.asm).
     PHASE4 = True
     files = [('!BOOT', 0x30900, 0x30900, detect),

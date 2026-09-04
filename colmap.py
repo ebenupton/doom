@@ -676,7 +676,7 @@ def blobs(flat=True):
         # The tube driver's SPACE 'use' needs these; walk_drv reads the
         # bank-C copy banked_bsp seeds, which the parasite cannot page to.
         uv = use_vectors()
-        assert A['usevec'] + len(uv) <= 0x7000, 'USEVEC reaches VRCACHE'  # flat $6EFC (bank A laid flat, by construction)
+        assert A['usevec'] + len(uv) <= 0x7000, 'USEVEC reaches VXCACHE'  # flat $6EFC (bank A laid flat, by construction)
         out[A['usevec']] = uv
     # (the bank-B $A900 / flat $8400 staging emits died 2026-08-18: at
     #  $1A00 the ports ship directly inside LOW / the tube CODE file,

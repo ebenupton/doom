@@ -1,0 +1,14 @@
+barrel tier0 thing(1312,-3264) d=130 ab=64 -> H=32 a=12 lod=0 box=(116, 112, 140, 144) n=131 OK
+barrel tier1 thing(1312,-3264) d=120 ab=64 -> H=34 a=12 lod=1 box=(116, 114, 140, 148) n=135 OK
+helmet tier0 thing(736,-2976) d=430 ab=64 -> H=5 a=3 lod=0 box=(125, 89, 131, 94) n=18 OK
+helmet tier1 thing(736,-2976) d=200 ab=64 -> H=13 a=7 lod=1 box=(121, 98, 135, 111) n=64 OK
+stimpack tier0 thing(3072,-4768) d=160 ab=64 -> H=22 a=10 lod=0 box=(118, 103, 138, 118) n=70
+stimpack tier0 thing(3072,-4768) d=160 ab=192 -> H=22 a=10 lod=0 box=(118, 103, 138, 118) n=70
+stimpack tier0 thing(3072,-4768) d=160 ab=0 -> H=22 a=10 lod=0 box=(118, 103, 138, 125) n=103 OK
+stimpack tier1 thing(3072,-4768) d=110 ab=64 -> H=32 a=15 lod=1 box=(113, 114, 143, 146) n=193 OK
+medikit tier0 thing(2880,-4416) d=330 ab=64 -> H=11 a=8 lod=0 box=(120, 91, 136, 102) n=69 OK
+medikit tier1 thing(2880,-4416) d=200 ab=64 -> H=18 a=13 lod=1 box=(115, 98, 141, 116) n=131 OK
+armour tier0 thing(1824,-3280) d=152 ab=64 -> H=23 a=21 lod=0 box=(107, 97, 149, 120) n=127 OK
+armour tier1 thing(1824,-3280) d=120 ab=64 -> H=29 a=26 lod=1 box=(102, 102, 154, 131) n=153 OK
+lamp tier0 thing(3232,-3040) d=300 ab=64 -> H=27 a=6 lod=0 box=(122, 77, 134, 104) n=94 OK
+potion tier0 thing(1312,-3520) d=150 ab=64 -> H=24 a=9 lod=0 box=(119, 98, 137, 122) n=68 OK

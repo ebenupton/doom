@@ -10,7 +10,7 @@
 ;     1. Back-face test [backface.s] — tail-dispatched: JMPs to
 ;        ::bf_seg_front here or straight to ::s_advance on a back seg.
 ;     2. Vertex pipeline per endpoint [seg_xform.s]: chain reuse, frame
-;        vrcache, VXCACHE coherence cache, or full fetch+rotate; results land
+;        vxcache, VRCACHE coherence cache, or full fetch+rotate; results land
 ;        in the endpoint structs VX1/VX2 (zp.inc, stride 15).
 ;     3. Near-plane crossing resolution [resolve_crossing.s].
 ;     4. Fused has_gap range prelude + cull (clipper jt) — culled segs
@@ -33,7 +33,7 @@
 ;   for si in range(first, first + count):
 ;     hdr = seg_hdr[si]                        # 16-byte header, ROM
 ;     if back_face(hdr): continue
-;     xform v1, v2 (vrcache'd); near-clip; project sx1/sx2 (s16)
+;     xform v1, v2 (vxcache'd); near-clip; project sx1/sx2 (s16)
 ;     if both endpoints off one screen side: continue
 ;     if not has_gap(clamp8(sx), clamp8(sx')): continue
 ;     project sy pairs (deferred to here); swap endpoints if reversed

@@ -81,6 +81,32 @@ def geom(x, y, w, lines, col=HEAD, sw=1.0, op=1.0):
             f'stroke="{col}" stroke-width="{sw}" stroke-linecap="round" opacity="{op}"/>'
             for (x0,y0,x1,y1) in lines]
 
+def raster(x, y, w, fbhex, col=HEAD, op=1.0):
+    """The engine's ACTUAL pixels: the mode-4 framebuffer as it stood at that
+    moment, each horizontal run of lit pixels one rect on the 256x160 grid.
+    Where geom() draws the ideal line between the plotter's endpoints, this
+    shows what the Bresenham stepper really put on the screen."""
+    fb = bytes.fromhex(fbhex); sx = w/256.0
+    ph = max(sx, 1.0)      # a pixel row never thinner than one slide unit
+    out = []
+    for cy in range(20):
+        for pr in range(8):
+            yy = cy*8 + pr
+            if yy >= 160: break
+            row = 0
+            for c in range(32):
+                row = (row << 8) | fb[cy*256 + c*8 + pr]
+            bits = format(row, '0256b'); px = 0
+            while px < 256:
+                if bits[px] == '1':
+                    q = px
+                    while q < 256 and bits[q] == '1': q += 1
+                    out.append(f'<rect x="{x+px*sx:.2f}" y="{y+yy*sx:.2f}" width="{(q-px)*sx:.2f}" '
+                               f'height="{ph:.2f}" fill="{col}" opacity="{op}"/>')
+                    px = q
+                else: px += 1
+    return out
+
 def trapezia(x, y, w, spans, stroke, fillop=.13, sw=1.3, label=None, only=None, fill=None):
     """Draw the span set as real trapezia over a 256x160 view at (x,y,w):
     a dark solid body in the span's colour, bordered by the bright colour."""

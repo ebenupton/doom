@@ -149,7 +149,7 @@ USEVEC  = ROM_DRV_USEVEC_C           ; SPACE use-trace vectors: 64 x 4 (ux,uy s1
 ; the OS workspace is dead and reused, e.g. the vsync journal at $0300).
 ; Phases:
 ;   1. spawn position/VZ            5. keyboard -> manual-scan mode
-;   2. engine ROM-table pointers    6. render caches (RCACHE, VXCACHE)
+;   2. engine ROM-table pointers    6. render caches (RCACHE, VRCACHE)
 ;   3. CRTC 256x160 non-interlaced  7. animated-sector init (bank L2)
 ;   4. T1 field-locked beam clock   8. driver state + clear both buffers
 ; ---------------------------------------------------------------------------
@@ -299,7 +299,7 @@ vsy0:
     STA plotq_n   ; mode DIRECT until the first flip (the
                                 ; engine ships dv_emit_op = JMP plot_v, so
                                 ; the flag alone is consistent here)
-    ; --- translation-coherence vertex cache (VXCACHE): zero the valid bitmap
+    ; --- translation-coherence vertex cache (VRCACHE): zero the valid bitmap
     ;     page, then enable (the scalar state ships as LOW zeros at
     ;     $19A0-$19FF since the window slide). Zero-init is safe:
     ;     first enabled frame is cold (prev_ab sentinel path) and every
@@ -307,11 +307,11 @@ vsy0:
     LDA #0
     TAX
 vxinit:
-    STA VXCACHE_STATE,X             ; the whole bitmap page ($0700: VALID+
-    INX                         ; VDONE+VXCACHE_VALID+RCACHE_COMPUTED —
+    STA VRCACHE_STATE,X             ; the whole bitmap page ($0700: VALID+
+    INX                         ; VDONE+VRCACHE_VALID+RCACHE_COMPUTED —
     BNE vxinit                  ; boot-garbage safety, 256 bytes)
     LDA #1
-    STA VXCACHE_ENABLE
+    STA VRCACHE_ENABLE
     ; --- animated sectors: init state machines + lazy patch hook (glue
     ;     at $3DA0 pages bank L2; must run AFTER vxinit's $05xx zeroing) ---
     JSR anim_glue_init

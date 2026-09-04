@@ -217,8 +217,8 @@ NF_RLEAF = $80                          ; right child is a subsector
 NF_LLEAF = $40                          ; left child is a subsector
 
 ; Page-alignment contracts for the byte-at-a-time pointer builds
-; (bbox_visible, bcac_index, the seg_xform vrcache indexers):
-.assert (VRCACHE_BASE & $FF) = 0, error, "VRCACHE_BASE must be page-aligned"
+; (bbox_visible, bcac_index, the seg_xform vxcache indexers):
+.assert (VXCACHE_BASE & $FF) = 0, error, "VXCACHE_BASE must be page-aligned"
 
 ; PAGE is BANKED-ONLY (Eben, 2026-09-04: "don't do ROMSEL writes in the
 ; parasite").  It emitted in both builds from 2026-09-02 to keep the 22K
@@ -517,11 +517,11 @@ VEXPL_LO   = $F800                      ; THE exception (banked $A000)
 VEXPL_HI   = $F880
 VEXPL_CONT = $EE00                      ; linear ($9800 banked)
 .endif
-; (VDONE moved next to VRCACHE_VALID 2026-07-26 — see below; $0600 is
+; (VDONE moved next to VXCACHE_VALID 2026-07-26 — see below; $0600 is
 ; fully FREE again.)
 
-; VRCACHE — the per-vertex RECIP + SCREEN-X cache (the "R" is the recip r,
-; not "rotation": the ROTATION is what VXCACHE holds).  Skips redundant
+; VXCACHE — the per-vertex RECIP + SCREEN-X cache (the "R" is the recip r,
+; not "rotation": the ROTATION is what VRCACHE holds).  Skips redundant
 ; projection when several segs share a vertex.
 ; Fields: rhi, rlo, sx_lo, sx_hi (s16 projected screen X), near-clip
 ; flag — one plane each (see below). EV16 (2026-08-09): the s8 evy/evx
@@ -529,28 +529,28 @@ VEXPL_CONT = $EE00                      ; linear ($9800 banked)
 ; recovers full s24 view totals via cr_recover instead of reading the
 ; lossy s8 tier.
 ; Valid bitmap: 1 bit per vertex; cleared at the start of each frame.
-; VRCACHE is page-split SoA (2026-07-15): one 512-byte plane per field,
+; VXCACHE is page-split SoA (2026-07-15): one 512-byte plane per field,
 ; junior page = idx 0-255, senior page = idx 256+ (n_verts <= 512,
 ; pack-time assert). The senior bit is header key byte B & $20 — the
 ; reader dispatches to an arm with the page BAKED, so there is no
 ; address generation anywhere in the vertex frame cache.
 ; BANKED: the four planes live in the BANK A window since 2026-08-17 — the
-; audit censused ~20,000 accesses (VXCACHE off, VXCACHE on with the coherence walk, and
+; audit censused ~20,000 accesses (VRCACHE off, VRCACHE on with the coherence walk, and
 ; the real driver from a bare machine) and every one already ran with bank 4
 ; paged, so this costs no paging and no cycles: abs,X in the window is the same
 ; 4 cycles it was in main. FLAT keeps them in main, so $0800-$0FFF and
 ; $1200-$19DF are free in the BANKED map ONLY — the one place the two builds'
 ; sub-$5800 maps diverge (Eben's call, banked-first).
-VRCACHE_BASE = BANKA_ORG + $1800        ; bank A, below the vertex planes
-VC_RHI  = VRCACHE_BASE + $000
-VC_RLO  = VRCACHE_BASE + $200
-VC_SXL  = VRCACHE_BASE + $400
-VC_SXH  = VRCACHE_BASE + $600
+VXCACHE_BASE = BANKA_ORG + $1800        ; bank A, below the vertex planes
+VC_RHI  = VXCACHE_BASE + $000
+VC_RLO  = VXCACHE_BASE + $200
+VC_SXL  = VXCACHE_BASE + $400
+VC_SXH  = VXCACHE_BASE + $600
 ; (VC_CLIP folded into VC_RLO 2026-08-13 — S = 0 is the clipped sentinel, real
-;  S is never 0. VRCACHE = 4 planes.)
-.assert VC_SXH + $200 <= BANKA_ORG + $2B00, error, "VRCACHE must end below the vertex planes"
-VRCACHE_VALID_BASE = $0900               ; THE BITMAP PAGE (relocation to
-                                        ; the VXCACHE plane tails tried and
+;  S is never 0. VXCACHE = 4 planes.)
+.assert VC_SXH + $200 <= BANKA_ORG + $2B00, error, "VXCACHE must end below the vertex planes"
+VXCACHE_VALID_BASE = $0900               ; THE BITMAP PAGE (relocation to
+                                        ; the VRCACHE plane tails tried and
                                         ; UNWOUND 2026-08-13 pending the
                                         ; two-bank layout plan; the
                                         ; 455+57=512 tail fit is real —
@@ -558,7 +558,7 @@ VRCACHE_VALID_BASE = $0900               ; THE BITMAP PAGE (relocation to
                                         ; bitmap on ONE page, heading the
                                         ; contiguous cache region
                                         ; $0700-$19FF): VALID +$00,
-                                        ; VDONE +$3C, VXCACHE_VALID +$80,
+                                        ; VDONE +$3C, VRCACHE_VALID +$80,
                                         ; RCACHE_COMPUTED +$C0. The
                                         ; VDONE $80-sentinel probe lands
                                         ; at +$BC — inside the $BB-$BF
@@ -575,7 +575,7 @@ VRCACHE_VALID_BASE = $0900               ; THE BITMAP PAGE (relocation to
 ; the old $0600 home cleared only 0-49 and leaned on the packer's
 ; ids<384 assert for the tail; that dependence is gone. $1B78-$1BFF
 ; stays free (ex-BCA_WS).
-VDONE = VRCACHE_VALID_BASE + 60          ; (57 B live; the crossing's
+VDONE = VXCACHE_VALID_BASE + 60          ; (57 B live; the crossing's
                                         ; B=$80 probe/mark lands at
                                         ; $07BC — the sentinel gap)
 

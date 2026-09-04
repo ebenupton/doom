@@ -14,7 +14,7 @@ Kept for the history below, which is why it existed.
 banked-vs-FLAT framebuffer gate.
 
 Every other banked gate compares the banked engine against ITSELF
-(lockstep = model vs bare machine, both banked; vxcache/rotcache = the
+(lockstep = model vs bare machine, both banked; vrcache/rotcache = the
 same build with a cache on/off) — a banked-vs-flat divergence sails
 through all of them. This gate renders the same frames on BOTH builds
 and byte-compares the framebuffers.

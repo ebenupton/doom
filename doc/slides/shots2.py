@@ -24,6 +24,10 @@ def spans():
         out.append({k: mem[a+s] for k,a in P.items()} | {'slot': s}); s = mem[P['NEXT']+s]; n+=1
     return out
 def snap(): return list(PLOTTED)   # ideal endpoints, not pixels
+FB, FBLEN = 0x5800, 0x1400
+def fb(): return bytes(mem[FB:FB+FBLEN]).hex()   # the real raster at this moment
+STAMP, OFAST, OFUSED = S('obj_stamp'), S('obj_fast'), S('obj_fused')
+objstat={}
 POSE = (float(sys.argv[1]), float(sys.argv[2]), int(sys.argv[3]))
 TAG = sys.argv[4]
 shots=[]; ev=[]
@@ -38,12 +42,17 @@ def prof(entry, max_cycles=900000):
             sc.last_lines.append((0,0,0,0))
             PLOTTED.append((mem[RZ['X0']],mem[RZ['Y0']],mem[RZ['X1']],mem[RZ['Y1']]))
         if obj_sp is not None and mpu.sp >= obj_sp+2:
-            shots.append(dict(tag='object-done', lines=snap(), spans=spans(), cyc=mpu.processorCycles)); obj_sp=None
+            shots.append(dict(tag='object-done', lines=snap(), fb=fb(), spans=spans(), cyc=mpu.processorCycles)); obj_sp=None
         if pend is not None and mpu.sp >= pend[1]+2:
             pend[0]['after']=spans(); pend=None
+        if pc == STAMP and obj_sp is not None:
+            st=objstat.setdefault(len([s for s in shots if s['tag']=='object-start']), dict(entries=0, plain=0, armed=0, fast=None))
+            st['entries']+=1
+            if st['fast'] is None: st['fast']=mem[OFAST]
+            st['armed' if mem[OFUSED] else 'plain']+=1
         if pc == OBJSLOT and obj_sp is None:
             obj_sp = mpu.sp
-            shots.append(dict(tag='object-start', lines=snap(), spans=spans(), cyc=mpu.processorCycles))
+            shots.append(dict(tag='object-start', lines=snap(), fb=fb(), spans=spans(), cyc=mpu.processorCycles))
         if pc in (MS, APPLY, KILL):
             inobj = obj_sp is not None
             if pc == APPLY:
@@ -56,13 +65,14 @@ def prof(entry, max_cycles=900000):
                 e=dict(kind='mark_solid', obj=inobj, lo=mem[IL], hi=mem[IH], before=spans(), cyc=mpu.processorCycles)
                 nms += 1
                 if nms in (1, 3, 6, 10, 14):
-                    shots.append(dict(tag=f'walls-{nms}', lines=snap(), spans=spans(), cyc=mpu.processorCycles))
+                    shots.append(dict(tag=f'walls-{nms}', lines=snap(), fb=fb(), spans=spans(), cyc=mpu.processorCycles))
             ev.append(e); pend=[e, mpu.sp]
         mpu.step()
     sc.last_cycles=mpu.processorCycles; sc.total_cycles+=mpu.processorCycles
     return mpu.processorCycles
 sc._run=prof
 cyc = r.render_frame(POSE[0], POSE[1], POSE[2], dw.player_floor(POSE[0], POSE[1]))
-shots.append(dict(tag='final', lines=snap(), spans=spans(), cyc=cyc))
-json.dump(dict(pose=POSE, cyc=cyc, shots=shots, events=ev), open(f'{sys.argv[5]}', 'w'))
+shots.append(dict(tag='final', lines=snap(), fb=fb(), spans=spans(), cyc=cyc))
+json.dump(dict(pose=POSE, cyc=cyc, shots=shots, events=ev, objstat=objstat), open(f'{sys.argv[5]}', 'w'))
+print('OBJSTAT', objstat)
 print(f'SHOT {TAG} {cyc:,} cyc  shots={[s["tag"] for s in shots]}  events={len(ev)}')

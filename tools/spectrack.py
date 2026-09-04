@@ -51,7 +51,7 @@ DCL walks clip to nothing (~5k/frame warm, no pre-test cheaper than
 the walk found yet). umul_round_div/interp/tighten 'waste' is A-return
 noise.
 Usage: python3 tools/spectrack.py [n_positions] [warm]
-  warm: fixed-angle walk sequence, VXCACHE+RCACHE+D enabled, warmup skipped.
+  warm: fixed-angle walk sequence, VRCACHE+RCACHE+D enabled, warmup skipped.
 """
 import os, sys, bisect, collections
 os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
@@ -214,10 +214,10 @@ def main():
     if warm:
         # fixed-angle walk with all three coherence caches enabled (the
         # flat build honors the enable bytes); track from frame 4 on so
-        # VXCACHE/RCACHE/D and the VYCACHE are genuinely warm.
+        # VRCACHE/RCACHE/D and the VYCACHE are genuinely warm.
         import abi, pygame as pg
         mem = sc.mpu.memory
-        list.__setitem__(m, abi.VXCACHE_ENABLE, 1)
+        list.__setitem__(m, abi.VRCACHE_ENABLE, 1)
         D_FWD = sym('D_FWD')
         px, py, ab = 3000.0, -2900.0, 129     # walk INTO the zigzag depth
         for k in range(4 + n):

@@ -28,7 +28,7 @@ FB_LO, FB_HI = 0x5800, 0x6C00      # banked hw screen (was the flat harness
 STUB = 0x7F00                      # Somewhere a render does NOT wipe. THREE
                                    # earlier homes were wrong and each showed
                                    # up as "the queue diverges": $0F00 is the
-                                   # flat VRCACHE; the flat harness cleared
+                                   # flat VXCACHE; the flat harness cleared
                                    # $F800-$FDFF every frame; and $FE80 is
                                    # real I/O once the memory model banks
                                    # (the stub became register writes).  In

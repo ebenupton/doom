@@ -35,13 +35,13 @@ import symmap, colmap, anim_sectors as an, doom_wireframe as dw
 # The rcache psi planes (length = node count) ...
 PLANES = ()      # the rcache psi planes went with the extent cache (2026-09-04)
 # ...and every OTHER relocatable cache block, with its real length.  These
-# were missing, and the gate cheerfully passed a rehome that put four VXCACHE
+# were missing, and the gate cheerfully passed a rehome that put four VRCACHE
 # planes inside the flat seg-header table (ROM_SEG_HDR_C $8600 + 5,884 B).
 # Only tube_walk caught it, four frames in.  A cache the gate does not know
 # about is a cache that can land anywhere.  2026-08-30.
-SIZED_PLANES = (('VXCACHE_XLO', 0x200), ('VXCACHE_XHI', 0x200),
-                ('VXCACHE_YLO', 0x200), ('VXCACHE_YHI', 0x200),
-                ('VRCACHE_BASE', 0x200),
+SIZED_PLANES = (('VRCACHE_XLO', 0x200), ('VRCACHE_XHI', 0x200),
+                ('VRCACHE_YLO', 0x200), ('VRCACHE_YHI', 0x200),
+                ('VXCACHE_BASE', 0x200),
                 ('VYCACHE_R_S', 0x100), ('VYCACHE_KEY', 0x100),
                 ('VYCACHE_L', 0x100), ('VYCACHE_H', 0x100))
 
@@ -119,7 +119,7 @@ def tables(flat):
         # (off_seg_hdr..off_dirs) at ROM_SEG_HDR_C; the DIR planes, SS
         # planes and SS_CNT have their own bank homes now, so the old
         # off_ss_cnt extent over-reported the table and false-flagged
-        # VRCACHE (which sits just above the real blob end).
+        # VXCACHE (which sits just above the real blob end).
         for _nm, _len in (('ROM_SEG_HDR_C', L['off_dirs'] - L['off_seg_hdr']),
                           ('ROM_VERTS_C',   L['off_seg_hdr'] - L['off_verts']),
                           ('NODE_SOA',      L['off_verts'])):
@@ -139,7 +139,7 @@ def tables(flat):
         out.append(('wad:obj_art', art_a, 4 * 35))
         # OBJ_ANYB bitmap (2026-08-29): python-placed, invisible to the
         # linker — register so future placements collide loudly (the
-        # byte-plane experiment landed on engine_pmbf/VXCACHE senior pages)
+        # byte-plane experiment landed on engine_pmbf/VRCACHE senior pages)
         _anyb = symmap.sym('OBJ_ANYB', banked=0, c02=1)
         out.append(('obj_anyb', _anyb, L['obj_bits_len']))
         # angle-module tables (python-loaded; a PMEXT cut landed on

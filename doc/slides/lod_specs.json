@@ -1,0 +1,96 @@
+[
+ {
+  "name": "lod_barrel_far",
+  "x": 1312,
+  "y": -3384,
+  "ab": 64,
+  "kind": "barrel",
+  "tier": 0
+ },
+ {
+  "name": "lod_barrel_near",
+  "x": 1312,
+  "y": -3384,
+  "ab": 64,
+  "kind": "barrel",
+  "tier": 1
+ },
+ {
+  "name": "lod_helmet_far",
+  "x": 736,
+  "y": -3075,
+  "ab": 64,
+  "kind": "helmet",
+  "tier": 0
+ },
+ {
+  "name": "lod_helmet_near",
+  "x": 736,
+  "y": -3075,
+  "ab": 64,
+  "kind": "helmet",
+  "tier": 1
+ },
+ {
+  "name": "lod_stimpack_far",
+  "x": 3072,
+  "y": -4896,
+  "ab": 64,
+  "kind": "stimpack",
+  "tier": 0
+ },
+ {
+  "name": "lod_stimpack_near",
+  "x": 3072,
+  "y": -4896,
+  "ab": 64,
+  "kind": "stimpack",
+  "tier": 1
+ },
+ {
+  "name": "lod_medikit_far",
+  "x": 2880,
+  "y": -4521,
+  "ab": 64,
+  "kind": "medikit",
+  "tier": 0
+ },
+ {
+  "name": "lod_medikit_near",
+  "x": 2880,
+  "y": -4521,
+  "ab": 64,
+  "kind": "medikit",
+  "tier": 1
+ },
+ {
+  "name": "lod_armour_far",
+  "x": 1824,
+  "y": -3400,
+  "ab": 64,
+  "kind": "armour",
+  "tier": 0
+ },
+ {
+  "name": "lod_armour_near",
+  "x": 1824,
+  "y": -3400,
+  "ab": 64,
+  "kind": "armour",
+  "tier": 1
+ },
+ {
+  "name": "lod_lamp_far",
+  "x": 3232,
+  "y": -3250,
+  "ab": 64,
+  "kind": "lamp"
+ },
+ {
+  "name": "lod_potion_far",
+  "x": 1312,
+  "y": -3670,
+  "ab": 64,
+  "kind": "potion"
+ }
+]

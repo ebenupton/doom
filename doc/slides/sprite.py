@@ -15,8 +15,15 @@ r = BankedBspRender(dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,
                     dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
 sc = r.sc; mpu = sc.mpu; mem = mpu.memory
 KINDS = ('barrel','lamp','potion','helmet','stimpack','medikit','armour')
-def grab(px, py, ab, want_index=0, kind=None):
+LODH = S('obj_lodh')                    # per-kind tier switch (bank C): poked to force a tier
+import abi
+def grab(px, py, ab, want_index=0, kind=None, tier=None):
+    """tier=0/1 forces the far/near template at this pose by poking the kind's
+    switch height to $FF/0 for the frame, so both tiers can be captured at ONE H."""
     objs=[]
+    if tier is not None:
+        r.bm.select(abi.BANK_C); saved=r.bm[LODH+KINDS.index(kind)]
+        r.bm[LODH+KINDS.index(kind)] = 0xFF if tier==0 else 0
     def prof(entry, max_cycles=900000):
         mpu.pc=entry; mpu.sp=0xDD; mpu.p=0x30; mem[0x01DF]=0xFE; mem[0x01DE]=0xFF
         mpu.processorCycles=0; sc.last_lines=[]; plot=sc.PLOT_PCS
@@ -37,6 +44,8 @@ def grab(px, py, ab, want_index=0, kind=None):
         return mpu.processorCycles
     sc._run=prof
     r.render_frame(px, py, ab, dw.player_floor(px, py))
+    if tier is not None:
+        r.bm.select(abi.BANK_C); r.bm[LODH+KINDS.index(kind)] = saved
     best=None
     for o in objs:
         b, a = o['before'], o['after']
@@ -59,7 +68,7 @@ def grab(px, py, ab, want_index=0, kind=None):
     return best
 
 for spec in json.load(open(sys.argv[1])):
-    g = grab(spec['x'], spec['y'], spec['ab'], spec.get('i', 0), spec.get('kind'))
+    g = grab(spec['x'], spec['y'], spec['ab'], spec.get('i', 0), spec.get('kind'), spec.get('tier'))
     if not g: print(f"MISS {spec['name']}"); continue
     x0,y0,x1,y1 = g['box']
     print(f"SPR {spec['name']:16s} kind={g['kind']:9s} tier={'NEAR' if g['lod'] else 'far '} "

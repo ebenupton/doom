@@ -2,7 +2,7 @@
 
 *IMPLEMENTED 2026-08-13 (same day). Measured: 332.8 -> 193.7 ROMSEL
 writes/frame (-42%), banked -774 cyc/frame on the 6-position paging
-set. Deviations from the plan below: VRCACHE/VXCACHE/bitmaps STAYED IN MAIN
+set. Deviations from the plan below: VXCACHE/VRCACHE/bitmaps STAYED IN MAIN
 (main is always visible — moving them buys no paging); VYCACHE went to
 bank A (the y-stage holds A, so the 1K fits after the recip shrink);
 the DIR planes ship in BOTH banks at $B700 (the shared
@@ -15,11 +15,11 @@ under bank A — the one union consumer the plan missed).*
 |----------------------------------|--------|-------|
 | seg headers (649 × 16)           | 10,384 | detail stream is dead — headers ARE the seg data |
 | vertex planes VP_OX/OY/PG        |  1,536 | 3 × 512 (junior + senior halves) |
-| VRCACHE planes (4 × 512)          |  2,048 | rhi, rlo (S=0 clip sentinel), sxl, sxh |
-| VXCACHE planes (4 × 512)             |  2,048 | base counts |
+| VXCACHE planes (4 × 512)          |  2,048 | rhi, rlo (S=0 clip sentinel), sxl, sxh |
+| VRCACHE planes (4 × 512)             |  2,048 | base counts |
 | RECIP_M8 junior page (swapped)   |    256 | needs page alignment — NOT a tail |
 | RECIP_M8H far half               |    128 | fits a plane tail |
-| vertex bitmaps (3 × 57)          |    171 | VRCACHE_VALID, VDONE, VXCACHE_VALID — **the 455+57=512 tail fit**: live in plane tails, zero footprint |
+| vertex bitmaps (3 × 57)          |    171 | VXCACHE_VALID, VDONE, VRCACHE_VALID — **the 455+57=512 tail fit**: live in plane tails, zero footprint |
 | **total**                        | **16,101** | ≈ 280 spare (tail-packing the far half + bitmaps into the 11 × 57-byte senior-half tails is what makes it fit) |
 
 Constraints: planes and RECIP_M8 must stay page-aligned; the tails are
@@ -44,7 +44,7 @@ needs the mask-zero trick from 04bb56d (no gap byte in a tail home).
 Clipper, NJ blob (unrolled steep), HUD, VDESC/VEXPL, vplot.
 
 ## Main RAM reclaim
-VRCACHE (2K) + VXCACHE (2K) + bitmap page (256) leave main → **~4.3K
+VXCACHE (2K) + VRCACHE (2K) + bitmap page (256) leave main → **~4.3K
 freed**. VYCACHE (4 planes, 1K — projection-phase, can't live in a bank
 the y-stage doesn't hold... but the y-stage holds bank A; VYCACHE could
 join A if 1K is found — it isn't; so) **VYCACHE moves to freed main**
@@ -57,7 +57,7 @@ headroom / future.
   Today's node(L0) ↔ bca-tables(L2) flipping dies (~100+ of the 143
   PAGE/frame).
 - **Seg stages 1–4**: PAGE A once per seg batch; headers + verts +
-  VRCACHE + VXCACHE + recips resident, VYCACHE in main. The transform's bank
+  VXCACHE + VRCACHE + recips resident, VYCACHE in main. The transform's bank
   choreography (entry PAGE, exit-L2 contract, the with-back island's
   L0/L2 excursion) all collapse.
 - **Stages 5–9**: PAGE C for the emit cascade, exactly as today.
@@ -70,7 +70,7 @@ headroom / future.
   divergence.
 - Full repack: wad_packed layout, gen_layout_inc, banked_bsp loader,
   build_walk disc, bare-boot validation, jsbeeb both models.
-- Boot ordering: seed banks BEFORE define_bank (the vxcache landmine).
+- Boot ordering: seed banks BEFORE define_bank (the vrcache landmine).
 - Python mirrors follow the layout dict; the harness helpers that
   hardcode homes (the 120-byte wipe class of bug) need the by-symbol
   treatment first — partially done.

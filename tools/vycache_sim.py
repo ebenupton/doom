@@ -19,7 +19,7 @@ cache is never cleared, and a fresh-per-frame model reports compulsory
 misses that hardware would not take.  Equally, render_frame is not
 re-enterable on its own -- the span pool still reads solid and the walk
 bails in ~199 steps -- so each frame gets init/clear_screen/
-poke_init_frame_state, which leave VYCACHE and VXCACHE alone.
+poke_init_frame_state, which leave VYCACHE and VRCACHE alone.
 """
 import os, sys, statistics
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))

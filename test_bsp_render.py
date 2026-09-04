@@ -183,8 +183,8 @@ def test_view_setup():
 
 def test_to_view():
     """Position-path check (rot_w_pages era, 2026-08-11): br_to_view
-    died — the ref is built by vxcache_frame through the SAME page-
-    decomposed rotate as vertices. Validate the staged vxcache_ref
+    died — the ref is built by vrcache_frame through the SAME page-
+    decomposed rotate as vertices. Validate the staged vrcache_ref
     against the mirror: ref_c = rns(ref_88, 3)."""
     sc = dw.make_span_rig()
     mem = sc.mpu.memory
@@ -196,7 +196,7 @@ def test_to_view():
         write_view_state(mem, vx88, vy88, sc_tuple)
         mem[_sym('bca_ab')] = ab & 0xFF
         sc._run(ENTRY_BR_VIEW_SETUP)
-        rx = _sym('vxcache_ref_x'); ry = _sym('vxcache_ref_y')
+        rx = _sym('vrcache_ref_x'); ry = _sym('vrcache_ref_y')
         got_x = s16_from_zp(mem, rx)
         got_y = s16_from_zp(mem, ry)
         ctx = fp.fp_view_context(vx88, vy88, sc_tuple)
