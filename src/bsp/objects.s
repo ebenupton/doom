@@ -40,16 +40,14 @@
 ; ORDER IS LOAD-BEARING: obj_Y must follow obj_X by exactly 12 (obj_hex
 ; addresses both as obj_X,Y with Y = 0 or 12), asserted after the block.
 SEG_WORK
+; (obj_pu/px/cx_l/cx_h/yt_l/yt_h/fused were PROMOTED TO ZERO PAGE
+;  2026-09-04 -- see the zprotate block in src/zp.inc.  The order
+;  contract below is unaffected: it binds obj_X and obj_Y only.)
 
 obj_i:       .res 1
-obj_cx_l:    .res 1
-obj_cx_h:    .res 1
-obj_yt_l:    .res 1
-obj_yt_h:    .res 1
 obj_yb_l:    .res 1
 obj_yb_h:    .res 1
 obj_h:       .res 1
-obj_t:       .res 1                        ; obj_cur aliases this (dead once the vertices are built)
 obj_a:       .res 1
 obj_a2:      .res 1
 obj_a3:      .res 1
@@ -68,9 +66,7 @@ obj_Y:       .res 52                       ; 26 x s16; MUST be obj_X + 12.
                                            ; (doc/billboard).  Slot maps
                                            ; are PER KIND: each generator
                                            ; owns its own y/spill split.
-obj_pu:      .res 1                       ; ladder-builder scratch: rounded
 obj_pb:      .res 5                       ;   product; magnitudes; loop
-obj_px:      .res 1                       ;   index across umul8
 obj_pn:      .res 1                       ; obj_mirror's -side offset latch
 obj_lod:     .res 1                       ; 0 = far tier, 1 = near tier
 obj_n:       .res 1
@@ -88,7 +84,6 @@ obj_syt_h:   .res 6
 obj_syb_l:   .res 6
 obj_syb_h:   .res 6
 obj_sasp:    .res 6
-obj_fused:   .res 1                   ; FUSED authority-run flag.  Its FIRST home was a
 OBJ_ANYB:    .res 25                    ; [25] per-ss billboard bitmap, boot-filled by
                                         ;  baked $1158, which sat INSIDE obj_sasp
                                         ;  slot 1 — every armed stamp wrote asp=$01

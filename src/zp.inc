@@ -111,7 +111,7 @@
 .globalzp zp_br_sign
 .globalzp zp_br_r_m8
 .globalzp zp_br_r_s
-.globalzp zp_br_px2_l
+.global zp_br_px2_l
 .globalzp DCLV_S16VY
 .global zp_br_px2_h
 .globalzp zp_rs_l
@@ -122,8 +122,8 @@
 .globalzp zp_br_t1
 .globalzp zp_br_t2
 .globalzp zp_br_t3
-.globalzp zp_br_t4
-.globalzp zp_br_t5
+.global zp_br_t4
+.global zp_br_t5
 .globalzp zp_seg_ep
 .globalzp ANIM_VAL
 .globalzp zp_tw
@@ -182,8 +182,9 @@
 .globalzp zp_prev
 .globalzp zp_bv_entry
 .globalzp zp_seg_end_x
-.globalzp zp_seg_fh
-.globalzp zp_seg_ch
+.global zp_seg_fh
+.global zp_seg_ch
+.global val_hi
 .globalzp zp_seg_top_dlt
 .globalzp zp_seg_bot_dlt
 .globalzp zp_save0
@@ -252,7 +253,7 @@
 .globalzp zp_line_xr_h
 .globalzp zp_cb_cy2
 .globalzp zp_line_yr_h
-.globalzp zp_cb_top1
+.global zp_cb_top1
 .globalzp obj_hcnt
 .global fw_top2
 .globalzp LC_OY2_HI
@@ -306,7 +307,15 @@
 .globalzp LC_OFF_HI
 
 .globalzp obj_e
-.globalzp obj_ss
+.globalzp obj_t
+.globalzp obj_pu
+.globalzp obj_cx_h
+.globalzp obj_cx_l
+.globalzp obj_px
+.globalzp obj_yt_l
+.globalzp obj_yt_h
+.globalzp obj_fused
+.global obj_ss
 
 .ifdef ZP_OWNER
 .segment "ZEROPAGE"
@@ -338,7 +347,8 @@ zp_br_res_h:                .res 1 ; [bsp]; s24 result mid (the s16 path stops h
 zp_br_sign:                 .res 1 ; [bsp]; 0 = positive, non-0 = negative
 zp_br_r_m8:                 .res 1 ; [bsp]; u8 hi of reciprocal
 zp_br_r_s:                  .res 1 ; [bsp]; u8 lo
-zp_br_px2_l:                .res 1 ; [bsp]; tie-broken doubled raw x:
+obj_cx_l:                   .res 1 ; ROTATED IN 2026-09-04 (zprotate): the object block is
+                                    ; the hottest absolute set; out went zp_br_px2_l
 DCLV_S16VY:                .res 1 ; ROTATED IN (zprotate): 16.3 vs zp_br_px2_h's 15.5
 zp_rs_l:                    .res 1 ; [bsp] sin-side rotate result lo (res-slot
                                   ; split 2026-07-19: sin cores/variants write
@@ -349,8 +359,10 @@ zp_br_t0:                   .res 1 ; [bsp]
 zp_br_t1:                   .res 1 ; [bsp]
 zp_br_t2:                   .res 1 ; [bsp]
 zp_br_t3:                   .res 1 ; [bsp]
-zp_br_t4:                   .res 1 ; [bsp]; back-face u24 product hi bytes —
-zp_br_t5:                   .res 1 ; [bsp]; |P1|=(t2,t3,t4) |P2|=(t0,t1,t5),
+obj_yt_l:                   .res 1 ; ROTATED IN 2026-09-04 (zprotate): the object block is
+                                    ; the hottest absolute set; out went zp_br_t4
+obj_yt_h:                   .res 1 ; ROTATED IN 2026-09-04 (zprotate): the object block is
+                                    ; the hottest absolute set; out went zp_br_t5
 zp_seg_ep:                  .res 1 ; [bsp]; per-endpoint STRUCT offset into
 ANIM_VAL:                   .res 1 ; [bsp]; anim: patch value (registered
 zp_ri_d_l:                  .res 1 ; [bsp]
@@ -405,8 +417,8 @@ LC_REM_HI:                  .res 1 ; [clip]
 fwl_rendv:                  .res 1 ; [clip]; $80 = open end
 fwl_zx0:                    .res 1 ; [clip]; current overlap
 fwl_zx1:                    .res 1 ; [clip]
-obj_ss:                     .res 1 ; ROTATED IN (zprotate): 27.4
-                                   ; accesses/frame vs fwl_leftf's 2.3
+obj_pu:                     .res 1 ; ROTATED IN 2026-09-04 (zprotate): the object block is
+                                    ; the hottest absolute set; out went obj_ss
 zp_node_ch_l:               .res 1 ; [bsp]; current child (lo, hi: 16-bit id)
 zp_pm_p:                    .res 2 ; [bsp]; pmove: collision list pointer ; w=2
                                   ; SURVIVES DRAWS (the old $79 home was
@@ -444,8 +456,10 @@ zp_seg_end_x:               .res 1 ; [clip]; DCL: right end of the open
                                   ; on DECLARED addresses and does not know
                                   ; widths; $65 is genuinely free ($64 is
                                   ; zp_bv_entry's hi, $66 is zp_seg_fh).
-zp_seg_fh:                  .res 1 ; [bsp]; s8 prescaled front floor height
-zp_seg_ch:                  .res 1 ; [bsp]; s8 prescaled front ceiling height
+obj_cx_h:                   .res 1 ; ROTATED IN 2026-09-04 (zprotate): the object block is
+                                    ; the hottest absolute set; out went zp_seg_fh
+obj_fused:                  .res 1 ; ROTATED IN 2026-09-04 (zprotate): the object block is
+                                    ; the hottest absolute set; out went zp_seg_ch
 zp_seg_top_dlt:             .res 1 ; [bsp]; s8 ch - vz (height delta for top edge)
 zp_seg_bot_dlt:             .res 1 ; [bsp]; s8 fh - vz (height delta for bottom edge)
 zp_save0:                   .res 1 ; [clip]; DCL line-clip scratch (also
@@ -539,7 +553,8 @@ zp_cb_cx1:                  .res 1 ; [clip]; u8, clipped left X
 zp_cb_cy1:                  .res 1 ; [clip]; u8, clipped left Y (line Y at cx1)
 zp_cb_cx2:                  .res 1 ; [clip]; u8, clipped right X
 zp_cb_cy2:                  .res 1 ; [clip]; u8, clipped right Y (line Y at cx2)
-zp_cb_top1:                 .res 1 ; [clip]; u8, span top at cx1
+obj_px:                     .res 1 ; ROTATED IN 2026-09-04 (zprotate): the object block is
+                                    ; the hottest absolute set; out went zp_cb_top1
 obj_hcnt:                  .res 1 ; ROTATED IN (zprotate): 20.4 vs fw_top2's 4.8
 LC_OY2_HI:                 .res 1 ; ROTATED IN (zprotate): 18.6 vs zp_cb_bot1's 10.4
 cp_vx0:                     .res 1 ; [clip]; visible piece staging
@@ -582,8 +597,10 @@ zp_tail_vec:                .res 2 ; [ang] 2-byte tail vector: the corner arms
 LC_TGT_LO:                  .res 1 ; ROTATED IN (zprotate): 18.6 vs t0's 2.4
    .res 1                               ; $CD = t1 (hand-baked)
 fw_ax1:                     .res 1 ; [clip]
-   .res 1                               ; $CF = val_hi (rc_bytehi),
-                                        ; hand-baked in ang/header_div.s
+obj_t:                      .res 1 ; ROTATED IN 2026-09-04 (zprotate): 35.1
+                                   ; accesses/frame vs val_hi's 1.9.  RENAMED
+                                   ; IN PLACE -- $CC/$CD/$C8 are hand-baked
+                                   ; equates that a shift would collide.
 zp_hg_cache:                .res 1 ; [clip]; has_gap coherence cache: last-matching span offset
 zp_i_x0:                    .res 1 ; [clip]
 zp_i_y0:                    .res 1 ; [clip]
@@ -684,6 +701,23 @@ zp_br_px2_h: .res 1     ; 15.5
 ; fewer as well as a faster byte.
 t0:          .res 1     ; 2.4
 .popseg
+
+
+; --- EVICTED FROM ZERO PAGE 2026-09-04 (zprotate rotation) -------------
+; Cold occupants displaced by the object block.  They stay DECLARED here
+; so every includer still sees the name -- only the segment changed, so
+; the references assemble as absolute (1 cycle, 1 byte dearer each).
+.segment "WORK"
+obj_ss:                     .res 1 ; ROTATED IN (zprotate): 27.4
+                                   ; accesses/frame vs fwl_leftf's 2.3
+zp_seg_fh:                  .res 1 ; [bsp]; s8 prescaled front floor height
+zp_br_px2_l:                .res 1 ; [bsp]; tie-broken doubled raw x:
+zp_cb_top1:                 .res 1 ; [clip]; u8, span top at cx1
+zp_br_t4:                   .res 1 ; [bsp]; back-face u24 product hi bytes —
+zp_br_t5:                   .res 1 ; [bsp]; |P1|=(t2,t3,t4) |P2|=(t0,t1,t5),
+zp_seg_ch:                  .res 1 ; [bsp]; s8 prescaled front ceiling height
+val_hi:                     .res 1 ; was $CF (hand-baked in ang/header_div.s);
+                                   ; rcache reads it as rc_bytehi
 
 .endif                            ; ZP_OWNER
 

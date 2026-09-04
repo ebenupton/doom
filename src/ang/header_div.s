@@ -155,7 +155,9 @@ bca_p1 = $C8                            ; r1 = (phi1+512)&4095 u12 pair $C8/$C9 
 ; instead of copying it into a work area each check.
 t1 = $CD
 ; $CE free (was val_lo — box_classify's lo bytes ride X now, 2026-07-11)
-val_hi = $CF                            ; only user: rcache's rc_bytehi alias
+; val_hi EVICTED FROM ZERO PAGE 2026-09-04 (zprotate): 1.9 accesses a
+; frame did not earn $CF, which obj_t (35.1) now holds.  Its storage is
+; a WORK reservation in src/zp.inc; the only user is rcache's rc_bytehi.
 bca_ccsave = $65                        ; sole owner (see zp.inc $65 note)
 VATOX  = BANKB_ORG + $1100              ; viewangletox, 1025 entries
                                         ; (phi+512), page-aligned so

@@ -177,11 +177,20 @@ def _storage_names():
     A name is storage if it is DECLARED as storage: a `label:` in the ZP
     block or any `.res`/`.segment` unit, or an equate written with an
     explicit `$` hex literal (enum members are written in decimal).
+
+    THE PATTERN MUST DEMAND THE `$` (2026-09-04).  It used to accept
+    `= [$ or word-char]`, which any symbolic expression satisfies, so a DERIVED
+    CONSTANT counted as storage: `VIS_YMAX = Y_BIAS + 159` equals 207,
+    and $CF is a real byte (`val_hi`, aliased as rcache's rc_bytehi).
+    zprotate therefore offered "evict VIS_YMAX" -- a constant, at the
+    TOP of the plan.  Applying it would have edited a name that owns no
+    storage while leaving the byte occupied.  A computed equate is a
+    value, not an address.
     """
     import glob
     ok = {}
     lab = re.compile(r'^\s*(\w+):')
-    eqh = re.compile(r'^\s*(\w+)\s*=\s*[\$\w]')
+    eqh = re.compile(r'^\s*(\w+)\s*=\s*\$')
     zpinc = os.path.join(ROOT, 'src', 'zp.inc')
     for f in [zpinc] + \
              glob.glob(os.path.join(ROOT, 'src', '**', '*.s'), recursive=True) + \
