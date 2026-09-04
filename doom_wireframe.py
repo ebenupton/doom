@@ -2874,18 +2874,16 @@ def render_bsp_fp(nid, clips, ctx, vz,
     node = nodes[nid]
     side = point_on_side(wx_full, wy_full, node)
     ch = (node[12], node[13])
-    # Near child: bbox check before visiting (optimisation over DOOM's
-    # unconditional near-child visit — safe because if the bbox is
-    # entirely outside the frustum, nothing in the subtree is visible).
-    if (nid, side) in ADESC:
-        render_bsp_fp(ch[side], clips, ctx, vz,
-                      wx_full, wy_full, cos_f, sin_f, surface, vrcache, vwh_cache)
-    else:
-        br = fp_bbox_visible_fixed(node, side, ctx)
-        if br is not None:
-            if clips.has_gap(br[0], br[1]):
-                render_bsp_fp(ch[side], clips, ctx, vz,
-                              wx_full, wy_full, cos_f, sin_f, surface, vrcache, vwh_cache)
+    # DOOM'S SHAPE (2026-09-04, Eben): the NEAR child is descended
+    # UNCONDITIONALLY, exactly as r_bsp.c does -- it tests only the
+    # far box.  The near child is the half-space the viewer stands
+    # in, so the test rejected 5% of the time (1.9 subtrees/frame)
+    # while costing ~37.7 calls/frame; measured -2.8% over the
+    # 3,960-pose grid.  Over-descent draws NOTHING extra (the segs
+    # are clipped individually), so no pixel moves -- see
+    # project_overtraversal_robustness.
+    render_bsp_fp(ch[side], clips, ctx, vz,
+                  wx_full, wy_full, cos_f, sin_f, surface, vrcache, vwh_cache)
     if clips.is_full():
         return
     far = side ^ 1
@@ -3492,16 +3490,16 @@ def packed_render_bsp(nid, clips, ctx, vz,
     side = point_on_side(wx_full, wy_full, node)
 
     ch = (child_r, child_l)
-    # Near child: bbox check (see render_bsp_fp)
-    if (nid, side) in ADESC:
-        packed_render_bsp(ch[side], clips, ctx, vz,
-                          wx_full, wy_full, cos_f, sin_f, surface, ram)
-    else:
-        br = fp_bbox_visible_fixed(node, side, ctx)
-        if br is not None:
-            if clips.has_gap(br[0], br[1]):
-                packed_render_bsp(ch[side], clips, ctx, vz,
-                                  wx_full, wy_full, cos_f, sin_f, surface, ram)
+    # DOOM'S SHAPE (2026-09-04, Eben): the NEAR child is descended
+    # UNCONDITIONALLY, exactly as r_bsp.c does -- it tests only the
+    # far box.  The near child is the half-space the viewer stands
+    # in, so the test rejected 5% of the time (1.9 subtrees/frame)
+    # while costing ~37.7 calls/frame; measured -2.8% over the
+    # 3,960-pose grid.  Over-descent draws NOTHING extra (the segs
+    # are clipped individually), so no pixel moves -- see
+    # project_overtraversal_robustness.
+    packed_render_bsp(ch[side], clips, ctx, vz,
+                      wx_full, wy_full, cos_f, sin_f, surface, ram)
     if clips.is_full():
         return
     far = side ^ 1

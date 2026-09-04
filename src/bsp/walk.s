@@ -17,17 +17,28 @@
 ;     if clips.is_full(): return
 ;     if nid & 0x8000: render_subsector(nid & 0x7fff); return
 ;     side = point_on_side(px, py, node)               # br_node_setup
-;     if bbox_visible(node, side):                     # near child, NOW
-;         render(children[side])
+;     render(children[side])                           # near child, NO TEST
 ;     if clips.is_full(): return
 ;     if bbox_visible(node, side ^ 1):                 # far child, LATER
 ;         render(children[side ^ 1])
-; The 6502 flattens the recursion: visiting a node checks the NEAR child's
-; bbox immediately and pushes it, but first pushes a DEFERRED (node,
-; farside) entry underneath it. The far child's bbox + has_gap check runs
-; when that deferred entry is POPPED — i.e. after the entire near subtree
-; has rendered — so it queries exactly the span/occlusion state the Python
-; recursion sees at its second bbox_visible call.
+;
+; THE NEAR CHILD IS NEVER TESTED (2026-09-04, Eben) — this is DOOM's own
+; shape: r_bsp.c descends bsp->children[side] unconditionally and wraps
+; only children[side^1] in R_CheckBBox.  The near child is the half-space
+; the viewer stands in, so the test rejected just 5% of the time (1.9
+; subtrees/frame) while being charged on every node walked (~37.7
+; calls/frame, ~460 cyc each).  Measured -2.8% over the 3,960-pose armour
+; grid, -3.9% on its hottest tenth, worst frame -6%; cheap frames lose
+; ~0.3%.  Over-descent draws NOTHING extra — the segs of an invisible
+; subtree are rejected individually — so no pixel moves; both Python
+; models dropped the same test in the same commit, so the traversal
+; differential still compares like with like.
+; The 6502 flattens the recursion: visiting a node descends the NEAR child
+; straight away, but first pushes a DEFERRED (node, farside) entry.  The
+; far child's bbox + has_gap check runs when that deferred entry is POPPED
+; — i.e. after the entire near subtree has rendered — so it queries exactly
+; the span/occlusion state the Python recursion sees at its bbox_visible
+; call.
 ;
 ; The traversal is RECURSIVE on the hardware stack since 2026-07-14:
 ; rc_node renders one internal node; it pushes (node id, far side) as
@@ -122,8 +133,7 @@ bif_clr2:
 ;       if is_full(): unwind()     #  screen solid: nothing can show
 ;       side = node_setup(id)      #  player side of the partition
 ;       push id, side^1            #  the continuation's locals
-;       if bbox_visible(id, side):
-;           descend(child[id][side])          # near, as a CALL
+;       descend(child[id][side])              # near, as a CALL — NO TEST
 ;       side, id = pop, pop
 ;       if is_full(): unwind()
 ;       if bbox_visible(id, side):
@@ -493,19 +503,10 @@ rc_s0:
 ; descend as visible, no call. NEAR side only: a far test runs after the
 ; near subtree drew, so its verdict must be fresh.
    TAX                                     ; A = id (L0 anchored: SoA readable)
-   LDA NODE_DSGN,X
-   AND #$05                                ; b0 serve | b2 always-descend
-   BNE r0_vis                              ; (RIGHT box) — same cycles as
-                                        ; the old LSR/BCS pair
-   STA zp_bbox_side                       ; side store sunk past the serve
-                                        ; branch (serves never read it;
-                                        ; bbox entry takes no A)
-   JSR bbox_visible                     ; vector-dispatched (zp_bv_entry)
-   BCC r0_far_i                            ; near invisible: far check enters
-                                        ; ALREADY L2 (bca exit) — the clone
-                                        ; below calls the no-page entry
-                                        ; (BOTH builds since 2026-09-02:
-                                        ; pages are inert on the parasite)
+; NEAR CHILD: DESCEND, NO TEST (2026-09-04 — see the header).  The DSGN b0
+; same-as-parent serve went with it; bank WALK is already held (the
+; NODE_SETUP_DISPATCH above read the NODE_* planes), so the fetches below
+; are safe without bbox_visible's entry PAGE.
 r0_vis:
 ; (bank WALK held: bbox_visible pages it at entry and its exits never
 ; re-page — the four child-fetch PAGEs died in the two-bank re-cut)
@@ -537,21 +538,7 @@ r0_far_vis:
    LDA NODE_TYPE,X
    ASL A                                   ; N = NF_LLEAF
    JMP rc_descend_far                      ; TAIL call either way
-r0_far_i:                               ; near-invisible arc ONLY: bank is
-   PLA                                  ; L2-proven (bca exit; nothing here
-   TAX                                  ; touches banked data), so both the
-   STA zp_node_ch_l                     ; ADESC gate and the far check run
-   LDA #1                               ; with no PAGE.
-   STA zp_bbox_side
-   SPAN_IS_NOT_FULL
-   BEQ bsp_done_full
-   LDA NODE_DSGN,X
-   AND #$08                             ; ADESC (LEFT box)
-   BNE r0fi_vis
-   JSR bbox_visible_l2
-   BCC rc_ret
-r0fi_vis:
-   JMP r0_far_vis
+; (r0_far_i, the near-invisible arc, died with the near test.)
 rc_ret:
    RTS
 
@@ -569,13 +556,7 @@ rc_n1:
    LDA zp_node_ch_l
    PHA
    TAX                                     ; SAME-AS-PARENT serve, mirror:
-   LDA NODE_DSGN,X                         ; b1 = LEFT box == parent box
-   AND #$0A                                ; ... | b3 always-descend (LEFT)
-   BNE r1_vis                              ; serve: verdict inherited (1)
-   LDA #1                                  ; side store sunk past the serve
-   STA zp_bbox_side                        ; branch (mirror)
-   JSR bbox_visible
-   BCC r1_far_i                            ; near invisible: L2-proven (mirror)
+; NEAR CHILD: DESCEND, NO TEST (mirror of side 0).
 r1_vis:
    LDX zp_node_ch_l
    LDA NODE_CLLO,X                         ; inline LEFT fetch
@@ -602,20 +583,7 @@ r1_far_vis:
    STA zp_node_ch_l
    LDA NODE_TYPE,X                         ; N = NF_RLEAF
    JMP rc_descend_far                      ; TAIL call either way
-r1_far_i:                               ; near-invisible arc: L2-proven (mirror)
-   PLA
-   TAX
-   STA zp_node_ch_l
-   ZERO zp_bbox_side                    ; far = RIGHT
-   SPAN_IS_NOT_FULL
-   BEQ bsp_done_full
-   LDA NODE_DSGN,X
-   AND #$04                             ; ADESC (RIGHT box)
-   BNE r1fi_vis
-   JSR bbox_visible_l2
-   BCC rc_ret1
-r1fi_vis:
-   JMP r1_far_vis
+; (r1_far_i died with the near test — mirror.)
 rc_ret1:
    RTS
 .endscope

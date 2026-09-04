@@ -26,10 +26,17 @@ from symmap import sym
 # candelabras were removed outright (they had borrowed the template and
 # accounted for three of the corpus's stamps).
 EXPECT = {'HEX': 9, 'LAMP': 6,
-          'POTION': 7, 'HELMET': 23, 'BOXS': 1, 'BOXM': 2, 'VEST': 1}
+          'POTION': 7, 'HELMET': 25, 'BOXS': 1, 'BOXM': 2, 'VEST': 1}
 # (POTION 9 -> 7, 2026-09-01: the armour-room strip removed the only two
 #  zigzag-room potions the corpus ever had in view; the room's helmets
 #  never stamped from the corpus positions, so HELMET holds at 23.)
+# (HELMET 23 -> 25, 2026-09-04: the near-child bbox test was dropped from
+#  the walk -- DOOM's shape, see bsp/walk.s -- so the traversal now enters
+#  subsectors it used to cull, and two more helmet billboards get STAMPED.
+#  They draw nothing: the framebuffer is byte-identical at all 29
+#  fingerprint poses and the slot-coverage guard below still passes, so
+#  this is stamping work the fully-occluded early-out discards, not new
+#  geometry.  A DROP below these numbers is still a lost draw.)
 # (LAMP 8 -> 6, 2026-09-03: the two spawn-hall lamps by the armour-room
 #  approach were removed; the two new lamps at the step opening east of
 #  the courtyard are outside every corpus view.  The two approach
