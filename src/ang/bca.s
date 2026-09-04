@@ -797,6 +797,14 @@ ct_f_r2out:
 .macro CPM_ENTRY name, negx, negy, obase
    .local cmiss0, cmiss1, cmiss2, cmiss3, czx, czy
 name:
+.ifdef CPM_OFF
+; MEASUREMENT VARIANT (2026-09-04): the memo's HITS are switched off — jump
+; straight in as a stage-0 miss (A = dy hi is exactly what cmiss0 stores),
+; and skip the psi store at mask_done since nothing reads it now.  The key
+; BANK stays: those planes are not just a cache, the memo-shared rows read
+; the raw deltas back from them after the in-place negation.
+   JMP cmiss0
+.endif
    CMP CPM_KDYH,X                          ; stage 0: A = dy hi, no load  ;# ||         1.4
    BNE cmiss0                                                             ;# |          0.8
    LDA pa_dy                                                              ;# |          0.8
@@ -1083,9 +1091,11 @@ mask_done:
 ; and khave_sub's exit depend on it, so list its duties before
 ; touching it.
    LDX zp_cpm_slot                                                        ;# |          0.7
-   STA CPM_PSIH,X                                                         ;# |          1.1
-   LDA pa_res                                                             ;# |          0.7
+.ifndef CPM_OFF                            ; CPM_OFF keeps the LDX: it is
+   STA CPM_PSIH,X                          ; also the X = slot return     ;# |          1.1
+   LDA pa_res                              ; contract, not just the store ;# |          0.7
    STA CPM_PSIL,X                                                         ;# |          1.1
+.endif
 cp_havepsi:
 ; r = (afn - psi) & 4095, pure u12 (consumers do mod-4096 arithmetic
 ; on the hi nibble directly). pa_res stays stored: the psi-hi SBC and
