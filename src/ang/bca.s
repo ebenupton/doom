@@ -100,9 +100,11 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
    LDA yl+(s)*$100,Y                                                      ;# |          0.8
    SBC bca_pys                                                            ;#            0.0
    STA pa_dy                                                              ;# |          0.5
+.ifdef CPM_MEMO
    EOR pa_dx                               ; slot = (dx ^ dy) & $7F, hashed
    AND #$7F                                ; here where dy-lo is in A —   ;#            0.4
    TAX                                     ; EOR/AND/TAX keep C for the SBC
+.endif
    LDA yl+$200+(s)*$100,Y                                                 ;#            0.0
    SBC bca_pys+1                                                          ;# |          0.6
    STA pa_dy+1
@@ -116,9 +118,11 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
    LDA xl+(s)*$100,Y                                                      ;#            0.0
    SBC bca_pxs                                                            ;#            0.0
    STA pa_dx                                                              ;#            0.1
+.ifdef CPM_MEMO
    EOR pa_dy                               ; slot hash (pa_dy already valid) ;#            0.0
    AND #$7F                                                               ;#            0.0
    TAX
+.endif
    LDA xl+$200+(s)*$100,Y
    SBC bca_pxs+1                                                          ;#            0.1
    STA pa_dx+1
@@ -128,9 +132,11 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
    LDA yl+(s)*$100,Y
    SBC bca_pys                                                            ;#            0.0
    STA pa_dy                                                              ;#            0.0
+.ifdef CPM_MEMO
    EOR pa_dx                               ; slot hash (pa_dx carried over) ;#            0.0
    AND #$7F                                                               ;#            0.0
    TAX
+.endif
    LDA yl+$200+(s)*$100,Y                                                 ;#            0.3
    SBC bca_pys+1
    STA pa_dy+1
@@ -145,16 +151,47 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
 ; rows whose corners share a plane.
 ; ---------------------------------------------------------------------------
 .macro ZCF_MEMO_DX
+.ifndef CPM_MEMO
+   LDA cpm_sx                              ; from scratch: no key planes
+   STA pa_dx
+   LDA cpm_sx+1
+   STA pa_dx+1
+.else
    LDA CPM_KDXL,X
    STA pa_dx
    LDA CPM_KDXH,X
    STA pa_dx+1
+.endif
+.endmacro
+; stash the raw shared delta BEFORE c1's converter eats it
+.macro ZCF_SAVE_DX
+.ifndef CPM_MEMO
+   LDA pa_dx
+   STA cpm_sx
+   LDA pa_dx+1
+   STA cpm_sx+1
+.endif
+.endmacro
+.macro ZCF_SAVE_DY
+.ifndef CPM_MEMO
+   LDA pa_dy
+   STA cpm_sy
+   LDA pa_dy+1
+   STA cpm_sy+1
+.endif
 .endmacro
 .macro ZCF_MEMO_DY
+.ifndef CPM_MEMO
+   LDA cpm_sy
+   STA pa_dy
+   LDA cpm_sy+1
+   STA pa_dy+1
+.else
    LDA CPM_KDYL,X
    STA pa_dy                                                              ;#            0.0
    LDA CPM_KDYH,X
    STA pa_dy+1
+.endif
 .endmacro
 ; ---------------------------------------------------------------------------
 ; ZARM family — a corner arm: fetch corner 1, take its phi, fetch
@@ -203,6 +240,7 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
 .endmacro
 .macro ZARM_SYM s, x1, y1, x2, e1, e2, ck
    ZCF s, x1, y1, ck
+   ZCF_SAVE_DY                             ; 4-byte scratch (memo retired)
    JSR e1
    STA bca_p1+1
    STY bca_p1                                                             ;#            0.0
@@ -215,6 +253,7 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
 .endmacro
 .macro ZARM_SXM s, x1, y1, y2, e1, e2, ck
    ZCF s, x1, y1, ck
+   ZCF_SAVE_DX                             ; 4-byte scratch (memo retired)
    JSR e1
    STA bca_p1+1
    STY bca_p1
@@ -795,15 +834,19 @@ ct_f_r2out:
 ; excludes viewer-coincident corners.
 ; ============================================================================
 .macro CPM_ENTRY name, negx, negy, obase
-   .local cmiss0, cmiss1, cmiss2, cmiss3, czx, czy
+   .local cmiss0, cmiss1, cmiss2, cmiss3, czx, czy, cpm_conv
 name:
-.ifdef CPM_OFF
-; MEASUREMENT VARIANT (2026-09-04): the memo's HITS are switched off — jump
-; straight in as a stage-0 miss (A = dy hi is exactly what cmiss0 stores),
-; and skip the psi store at mask_done since nothing reads it now.  The key
-; BANK stays: those planes are not just a cache, the memo-shared rows read
-; the raw deltas back from them after the in-place negation.
-   JMP cmiss0
+.ifndef CPM_MEMO
+; MEMO RETIRED (2026-09-04): no probe, no key bank, no psi store, no slot.
+; The shared-axis rows take their raw delta from cpm_sx/sy instead of the
+; key planes, which was the only thing making those planes load-bearing,
+; and the machinery cost more than the 15.5% hit rate bought:
+; walk 227,881 -> 226,660, suite 3,136,857 -> 3,112,708, heavy 431,250 ->
+; 426,874, all pixel-exact.  DOOM_ASMDEFS=CPM_MEMO=1 puts it back.
+; Enters the converter with the state the miss ladder converged on.
+   LDX #obase
+   LDA pa_dx+1
+   JMP cpm_conv
 .endif
    CMP CPM_KDYH,X                          ; stage 0: A = dy hi, no load  ;# ||         1.4
    BNE cmiss0                                                             ;# |          0.8
@@ -841,6 +884,7 @@ cmiss3:
    STX zp_cpm_slot                         ; slot to zp on the MISS path  ;#            0.3
                                            ; only — X becomes the octant
    LDX #obase                                                             ;# |          0.4
+cpm_conv:
    ORA pa_dx                               ; A = pa_dx+1 (converged): the ;# |          0.6
    BEQ czx                                 ; x zero-out costs no load     ;#            0.4
 .if negx
@@ -1090,10 +1134,10 @@ mask_done:
 ; return contract (the octant chain repurposed X) — both mask_done
 ; and khave_sub's exit depend on it, so list its duties before
 ; touching it.
-   LDX zp_cpm_slot                                                        ;# |          0.7
-.ifndef CPM_OFF                            ; CPM_OFF keeps the LDX: it is
-   STA CPM_PSIH,X                          ; also the X = slot return     ;# |          1.1
-   LDA pa_res                              ; contract, not just the store ;# |          0.7
+.ifdef CPM_MEMO                            ; retired: no slot, no store —
+   LDX zp_cpm_slot                         ; X = slot's ONLY consumer was ;# |          0.7
+   STA CPM_PSIH,X                          ; the shared-row reload        ;# |          1.1
+   LDA pa_res                                                             ;# |          0.7
    STA CPM_PSIL,X                                                         ;# |          1.1
 .endif
 cp_havepsi:
@@ -1187,6 +1231,15 @@ SEG_CODE
 ; (rc_wipe, dbox_check, its probe arms and dst_drop -- the forward-
 ;  coherence cache and its refresh wheel -- deleted 2026-09-04.)
 end:
+; Corner scratch (2026-09-04): the four bytes that replace the key planes' second
+; job — the shared-axis rows' raw delta across c1's in-place negation.
+; Declared unconditionally so the symbol exists either way; it costs four
+; bytes of RWC in the default build and nothing reads them there.
+.segment "RWC"
+cpm_sx: .byte 0, 0
+cpm_sy: .byte 0, 0
+SEG_CODE
+
 .if BANKED
 ; (ld65 writes this: SAVE "bsp_render_ang_bk.bin")
 .else
