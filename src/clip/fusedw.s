@@ -197,17 +197,13 @@ cs_ox1:
    CMP fwl_hi                                                             ;# |||        0.4
    BCC cs_ent_bot                          ; yhi > IB: below/ambiguous    ;# ||         0.3
 ; ---- ACCEPT: visible over the whole overlap ----
-   LDA fwl_zx0                                                            ;# |||        0.4
-   CMP fwl_xl                                                             ;# |||        0.4
-   BEQ cs_acc_yl                                                          ;# |||        0.3
-   LDA fwl_dy                                                             ;# |          0.1
-   BEQ cs_acc_yl                                                          ;# |          0.1
-   JSR fw_line_interp_zx0                  ; entry y (PLOT only)          ;# |          0.1
-   JMP cs_acc_have                                                        ;#            0.1
-cs_acc_yl:
-   LDA fwl_yl                                                             ;# |||        0.3
-cs_acc_have:
-   STA cp_vy0                                                             ;# |||        0.4
+; E1 (2026-09-04): the entry y is PLOT-only and only a run OPEN reads it
+; (rv_extend / rv_degen discard cp_vy0) -- census: 69% of these interps
+; were thrown away.  Stage the LAZY sentinel; rv_open derives the y from
+; cp_vx0 when it actually opens a run.  ($FF is no visible y: the accept
+; proves the line lies within [IT, IB] over the overlap, IB <= 159.)
+   LDA #$FF
+   STA cp_vy0
    LDA fwl_zx0                                                            ;# |||        0.4
    STA cp_vx0                                                             ;# |||        0.4
    LDA fwl_zx1                                                            ;# |||        0.4
@@ -676,6 +672,19 @@ rv_open:
    LDA cp_vx0                              ; zp_head — the from-head rescan ;# ||         0.3
    STA fwl_run                             ; was the heavy frame's tax    ;# ||         0.3
    LDA cp_vy0                                                             ;# ||         0.3
+   CMP #$FF                                ; E1: lazy entry y (accept path)
+   BNE rv_have_y
+   LDA cp_vx0
+   CMP fwl_xl
+   BEQ rv_y_yl
+   LDA fwl_dy
+   BEQ rv_y_yl
+   LDA cp_vx0
+   JSR fw_line_interp_a                    ; the interp the accept path skipped
+   JMP rv_have_y
+rv_y_yl:
+   LDA fwl_yl
+rv_have_y:
    STA fwl_ry0                                                            ;# ||         0.3
    LDA cp_vx1                                                             ;# ||         0.3
    STA fwl_rend                                                           ;# ||         0.3
