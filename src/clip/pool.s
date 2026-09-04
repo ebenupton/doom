@@ -33,32 +33,62 @@
 ;         zp_hg_cache = 1 (has_gap coherence cache primed to the span).
 ; Clobbers A,X.  Python mirror: EndpointClipSpans.__init__.
 ; ======================================================================
+; The pool is a PARTITION: live list + free list = every slot, always
+; (allocs pop, frees push).  So a frame need not rebuild the constant
+; 2..31 chain: it pushes whatever is still LIVE onto the free list and
+; pops one slot back for the full-screen span (Eben, 2026-09-04: "pop
+; the allocated list onto the free list iteratively" -- it should be
+; short at frame end, and the walk is bounded by the pool anyway).
+; The FIRST frame after load still builds the chain from scratch: the
+; pool is boot garbage then.  pool_live (RWC, main RAM, ships as 0)
+; says which.
+.pushseg
+.segment "RWC"
+pool_live: .byte 0                         ; 0 until the first full build
+.popseg
 span_init:
 .scope
-; Free list: slots 2..31 (indices 2,3,...,31).
-   LDX #2                                  ; slot 2                                     ; |
-   STX zp_free                             ; |
-   CLC                                     ; loop C=0 invariant seed (the
-                                           ; CMP below re-clears on every
-                                           ; continue: BCS not taken)
+   LDA pool_live
+   BNE si_incr
+; ---- first frame: the constant chain 2..31, screen span in slot 1 ----
+   INC pool_live
+   LDX #2                                  ; slot 2
+   STX zp_free
+   CLC                                     ; loop C=0 invariant seed
 il:
    TXA
    BUMP_CC                                 ; C=0: seeded + CMP invariant
-; ||
-   CMP #NUM_SLOTS                          ; reached end? (= 32)                        ; |
-   BCS id                                  ; |
+   CMP #NUM_SLOTS                          ; reached end? (= 32)
+   BCS id
    STA POOL_NEXT,X
    TAX
-; ||
-   BNE il                                  ; always taken                               ; |
+   BNE il                                  ; always taken
 id:
-   LDA #0                                  ; A = 0 RIDES into slot 1's
-   STA POOL_NEXT,X                         ; NEXT/TXLO/XSTART stores below —
-                                        ; NOT a C02/STZ candidate
-; |
+   LDA #0
+   STA POOL_NEXT,X
+   LDX #1                                  ; slot 1 = the screen span
+   BNE si_setup                            ; (always)
+; ---- every later frame: live list -> free list, then pop one ----
+si_incr:
+   LDX zp_head
+   BEQ si_pop
+si_push:
+   LDY POOL_NEXT,X                         ; save the chain before the
+   LDA zp_free                             ; slot's NEXT becomes the push
+   STA POOL_NEXT,X
+   STX zp_free
+   TYA
+   TAX
+   BNE si_push
+si_pop:
+   LDX zp_free                             ; the screen span: ANY slot
+   LDA POOL_NEXT,X                         ; (the partition guarantees one)
+   STA zp_free
+si_setup:
+   LDA #0                                  ; A = 0 RIDES into the span's
+                                        ; NEXT/TXLO/XSTART stores below
 ; Active list: slot 1 = full screen with biased Y [Y_BIAS, Y_BIAS+159].
-   LDX #1                                  ; slot 1 (index 1)                           ; |
-   STX zp_head                             ; |
+   STX zp_head
    STA POOL_NEXT,X
    STA POOL_TXLO,X                          ; top anchor lo = 0
    STA POOL_BXLO,X                         ; bottom anchor lo = 0
@@ -83,12 +113,12 @@ id:
    STA POOL_OB,X
    STA POOL_IB,X
 ; | OB=IB=Y_BIAS+159
-   STX zp_hg_cache                         ; init cache to slot 1 (the initial span)   ; |
+   STX zp_hg_cache                         ; init cache to the screen span's slot
 ; FUSED walker state (2026-08-25): FW_MODE MUST be 0 before the first
 ; un-armed draw or it misroutes into the walker — the page is RAM and
 ; holds GARBAGE at boot on hardware (the zeroed-py65 harness hides it;
 ; the ZP-poison lesson, applied to the record page).
-   LDA #0                                  ; (X = 1 here; keep it)
+   LDA #0
    STA FW_MODE
    STA FW_TOUCH
    RTS                                     ; |
