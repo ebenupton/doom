@@ -117,7 +117,8 @@ SEG_HIGH
 ; SF_NEEDBT). Empty on screen iff bottom < Y_BIAS at BOTH endpoints
 ; (min < k <=> either < k), or top > Y_BIAS+159 at both.
 ; ---------------------------------------------------------------------------
-SZR_PROJ = $E2                          ; = VX1 (zp.inc vertex structs).
+SZR_PROJ = VX1                          ; the zp.inc vertex structs (was a
+                                        ; baked $E2 until 2026-09-04).
 ; X offsets below = struct offsets: +5 top, +7 bot, +9 btop, +11 bbot;
 ; +15 more for the v2 struct. (Old SEG_PROJ_BUF interleave retired
 ; 2026-07-10.) ZP,X addressing: abs,X on a ZP base still works; keep the

@@ -58,9 +58,13 @@
 ; zp scratch — frame-scoped: these sit inside the VX vertex structs
 ; ($E2-$FF), which are per-seg working state, dead between the frame's
 ; last seg and the next frame's first (the HUD runs post-render).
-zp_hud_src = $EB                        ; font glyph pointer
-zp_hud_dst = $ED                        ; framebuffer cell pointer
-HUD_VAL    = $F0                        ; byte being hexed
+; The HUD draws after the frame, so it borrows the seg pipeline's ZP.  These
+; are ALIASES, not addresses: a baked $EB/$ED pinned the whole zero-page
+; layout, and the pairs have to stay contiguous, which VX1 guarantees (one
+; 26-byte reservation).  2026-09-04.
+zp_hud_src = VX1                        ; font glyph pointer   (2 B)
+zp_hud_dst = VX1+2                      ; framebuffer cell ptr (2 B)
+HUD_VAL    = VX1+4                      ; byte being hexed
 
 HUD_ANGIDX = DV_ANGIDX                  ; driver vars via abi.inc —
 HUD_BACKHI = DV_BACKHI                  ; no private address copies
@@ -75,7 +79,7 @@ HUD_FIELDS = DV_FIELDS                  ; PAL fields the last frame consumed
 HUD_FONT   = DV_HUD_FONT                ; font base, chosen by the driver's
                                         ; OSBYTE 129 probe at boot; 0 = the
                                         ; probe never ran (py65 harnesses)
-zp_hud_t   = $F1                        ; hud_char scratch (frame-scoped, as
+zp_hud_t   = VX1+5                      ; hud_char scratch (frame-scoped, as
                                         ; the pointers above)
 
 .segment "HUD"

@@ -145,7 +145,10 @@ bca_ihi = zp_i_h                        ; (2026-07-18): the tail writes the
 ;  a different assembly unit — folds +EPS once per frame.)
 ; (bca_vis RETIRED 2026-07-20: the verdict rides the exit flags —
 ;  C/V since 2026-07-26, see bca.s's C/V-CONTRACT — $64 is FREE)
-bca_p1 = $C8                            ; r1 = (phi1+512)&4095 u12 pair $C8/$C9 (afn pre-biased; NOT sign-extended)
+bca_p1 = zp_bca_p1                      ; r1 = (phi1+512)&4095 u12 pair (afn
+                                        ; pre-biased; NOT sign-extended).  An
+                                        ; ALIAS since 2026-09-04: the baked $C8
+                                        ; pinned the zero-page layout.
 ; $CA FREE (zp_cpm_s2 died 2026-07-20: store-at-birth ended the
 ; rcache's memo-slot scavenge; bca_p2 died 2026-07-19: p2 rides
 ; registers through the whole tail). $CB = zp_rc_moved (zp.inc)
@@ -153,12 +156,15 @@ bca_p1 = $C8                            ; r1 = (phi1+512)&4095 u12 pair $C8/$C9 
 ; absolute-access tax across box_pos / corner_phi / sort / clip / clamp / VATOX.
 ; (top,bot,left,right s16) and we read via (bca_boxp),Y
 ; instead of copying it into a work area each check.
-t1 = $CD
+t1 = bca_t1                             ; alias (was a baked $CD, which the
+                                        ; linker never knew about)
 ; $CE free (was val_lo — box_classify's lo bytes ride X now, 2026-07-11)
 ; val_hi EVICTED FROM ZERO PAGE 2026-09-04 (zprotate): 1.9 accesses a
 ; frame did not earn $CF, which obj_t (35.1) now holds.  Its storage is
-; a WORK reservation in src/zp.inc; the only user is rcache's rc_bytehi.
-bca_ccsave = $65                        ; sole owner (see zp.inc $65 note)
+; a WORK reservation in src/zp.inc (its last user, the extent cache's
+; rc_bytehi alias, went with the cache 2026-09-04).
+bca_ccsave = zp_seg_end_x               ; borrowed (was a baked $65); see the
+                                        ; zp.inc note — dead outside a check
 VATOX  = BANKB_ORG + $1100              ; viewangletox, 1025 entries
                                         ; (phi+512), page-aligned so
                                         ; bca_tail rides the index lo in Y

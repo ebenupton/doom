@@ -143,6 +143,7 @@
 .globalzp fwl_yr
 .globalzp fwl_dy
 .globalzp pa_res
+.globalzp bca_t1
 .globalzp bca_afn
 .globalzp zp_bf_dir
 .globalzp zp_seg_flags
@@ -336,10 +337,10 @@ zp_br_fvy_l:                .res 1 ; [bsp]
 zp_br_fvy_h:                .res 1 ; [bsp]
 zp_br_dx_l:                 .res 1 ; [bsp]
 zp_br_dy_l:                 .res 1 ; [bsp]
-zp_br_vx_l:                 .res 1 ; [bsp]
-zp_br_vx_h:                 .res 1 ; [bsp]
-zp_br_vy_l:                 .res 1 ; [bsp]
-zp_br_vy_h:                 .res 1 ; [bsp]
+zp_br_vx_l:                 .res 4 ; [bsp]; total vx/vy (s16 counts) — ONE block: lo.s indexes it
+zp_br_vx_h = zp_br_vx_l+1
+zp_br_vy_l = zp_br_vx_l+2
+zp_br_vy_h = zp_br_vx_l+3
 zp_br_a:                    .res 1 ; [bsp]; multiplicand A (s8 input)
 zp_br_b:                    .res 1 ; [bsp]; multiplicand B
 zp_br_res_l:                .res 1 ; [bsp]; s24 result lo
@@ -373,25 +374,23 @@ zp_ri_d_h:                  .res 1 ; [bsp]; (was unused; s16 hi byte of d)
 fwl_xl:                     .res 1 ; [clip]; the armed line (fw_walk_line)
 fwl_yl:                     .res 1 ; [clip]
 fwl_xr:                     .res 1 ; [clip]
-pa_dx:                      .res 1 ; [ang]; s16 in ; w=2
-   .res 1                               ; FREE $31-$31
-pa_dy:                      .res 1 ; [ang]; s16 in ; w=2
-   .res 1                               ; FREE $33-$33
+pa_dx:                      .res 2 ; [ang]; s16 in ; w=2 (BOTH bytes: the hi byte used to hide in a pad marked FREE)
+pa_dy:                      .res 2 ; [ang]; s16 in ; w=2 (BOTH bytes: the hi byte used to hide in a pad marked FREE)
 zp_bbox_side:               .res 1 ; [bsp]
 zp_br_dx_h:                 .res 1 ; [bsp]
 zp_br_dy_h:                 .res 1 ; [bsp]
 fwl_yr:                     .res 1 ; [clip]
 fwl_dy:                     .res 1 ; [clip]
-pa_res:                     .res 1 ; [ang]; u16 out (fineangle) ; w=2
-   .res 1                               ; FREE $3A-$3A
-bca_afn:                    .res 1 ; [ang]; a_fine (s16) -- ZP (freed from pa_adx); hot in corner_phi ; w=2
-   .res 1                               ; FREE $3C-$3C
+pa_res:                     .res 2 ; [ang]; u16 out (fineangle) ; w=2 (BOTH bytes: the hi byte used to hide in a pad marked FREE)
+bca_afn:                    .res 2 ; [ang]; a_fine (s16) -- ZP (freed from pa_adx); hot in corner_phi ; w=2 (BOTH bytes: the hi byte used to hide in a pad marked FREE)
 zp_bf_dir:                  .res 1 ; [bsp]; diagonal back-face DIR-table index;
-   .res 1                               ; FREE (zp_cpm_slot, the corner
-                                        ; memo's hash slot, retired 2026-09-04)
+bca_t1:                     .res 1 ; [ang]; corner pipeline scratch (was a
+                                   ; baked $CD in header_div.s, invisible to
+                                   ; the allocator, until 2026-09-04; it took
+                                   ; the byte the retired corner memo's hash
+                                   ; slot left behind)
 zp_seg_flags:               .res 1 ; [bsp]; u8
-pa_ptr:                     .res 1 ; [ang]; 16-bit table pointer ; w=2
-   .res 1                               ; FREE $41-$41
+pa_ptr:                     .res 2 ; [ang]; 16-bit table pointer ; w=2 (BOTH bytes: the hi byte used to hide in a pad marked FREE)
 zp_ys_done:                 .res 1 ; [bsp]; 1 = the PREVIOUS seg ran the
 zp_ys_v1ok:                 .res 1 ; [bsp]; 1 = this seg's chained v1
 fwl_dx:                     .res 1 ; [clip]
@@ -501,27 +500,28 @@ RASTER_ZP_X1:               .res 1 ; [clip]
 RASTER_ZP_Y1:               .res 1 ; [clip]
 bca_boxp:                   .res 2 ; [ang]; ROM box pointer: caller points this at the 8-byte box
    .res 1                               ; FREE $88-$88
-zp_cr_vx_l:                 .res 1 ; [bsp]; clipped total vx (s16 counts)
-zp_cr_vx_h:                 .res 1 ; [bsp]
-zp_cr_vy_l:                 .res 1 ; [bsp]; clipped total vy (s16 counts)
-zp_cr_vy_h:                 .res 1 ; [bsp]
-bca_pxs:                    .res 1 ; [ang]; px sign-extended (s16) ; w=2
-   .res 1                               ; FREE $8E-$8E
+zp_cr_vx_l:                 .res 4 ; [bsp]; clipped total vx/vy (s16 counts) — ONE block: lo.s indexes it
+zp_cr_vx_h = zp_cr_vx_l+1
+zp_cr_vy_l = zp_cr_vx_l+2
+zp_cr_vy_h = zp_cr_vx_l+3
+bca_pxs:                    .res 2 ; [ang]; px sign-extended (s16) ; w=2 (BOTH bytes: the hi byte used to hide in a pad marked FREE)
 obj_e:                      .res 1 ; ROTATED IN (zprotate): 32.2
                                    ; accesses/frame vs fw_pol's 0.6
-zp_br_pxraw_l:              .res 1 ; [bsp]; s16 player x relative to map_center (raw)
-zp_br_pxraw_h:              .res 1 ; [bsp]
-zp_br_pyraw_l:              .res 1 ; [bsp]
-zp_br_pyraw_h:              .res 1 ; [bsp]
+zp_br_pxraw_l:              .res 4 ; [bsp]; s16 player x/y relative to map_center (raw) — ONE block: pmove indexes it
+zp_br_pxraw_h = zp_br_pxraw_l+1
+zp_br_pyraw_l = zp_br_pxraw_l+2
+zp_br_pyraw_h = zp_br_pxraw_l+3
 DCLS_FIRST:                .res 1 ; ROTATED IN (zprotate): 24.7 vs fw_top1's 4.8
 zp_plot_i:                  .res 1 ; [clip]; plot_h byte-index scratch
-zp_seg_hdr_p:               .res 1 ; [bsp]; persistent seg-header ptr (advances +12/seg)
-zp_seg_hdr_p_h:             .res 1 ; [bsp]
+zp_seg_hdr_p:               .res 2 ; [bsp]; persistent seg-header ptr (advances
+                                   ; +12/seg).  ONE reservation: it is used as
+                                   ; (zp_seg_hdr_p),Y, so the pair must stay
+                                   ; contiguous whatever the layout does.
+zp_seg_hdr_p_h = zp_seg_hdr_p+1
 LC_DEN_LO:                  .res 1 ; [clip]
 LC_DEN_HI:                  .res 1 ; [clip]
 zp_pyc_idx:                 .res 1 ; [bsp]; projection-cache probe index (X save)
-bca_pys:                    .res 1 ; [ang]; py sign-extended (s16) ; w=2
-   .res 1                               ; FREE $9C-$9C
+bca_pys:                    .res 2 ; [ang]; py sign-extended (s16) ; w=2 (BOTH bytes: the hi byte used to hide in a pad marked FREE)
 zp_br_px_x:                 .res 1 ; [bsp]; s16 player int x HIGH byte (px_h is lo)
 zp_br_py_x:                 .res 1 ; [bsp]; s16 player int y HIGH byte (py_h is lo)
 zp_dcl_out:                 .res 1 ; [clip]; per-line outcome accumulator
@@ -622,13 +622,20 @@ zp_prod_l:                  .res 1 ; [bsp+clip]
 zp_prod_h:                  .res 1 ; [bsp+clip]
 zp_div_den:                 .res 1 ; [bsp+clip]
 FW_MODE:                    .res 1 ; [clip]; s16 dispatch redirect (b7)
-zp_tmp0:                    .res 1 ; [bsp+clip]; umul8 scratch (matches span_clip); free outside span_clip
-zp_tmp1:                    .res 1 ; [clip]
-zp_tmp2:                    .res 1 ; [clip]
+zp_tmp0:                    .res 3 ; [bsp+clip]; umul8 scratch (matches
+                                   ; span_clip; free outside it).  THREE bytes
+                                   ; in ONE reservation: plot_axis uses
+                                   ; (zp_tmp0),Y and vplot (zp_tmp1),Y, so
+                                   ; tmp0/1 and tmp1/2 are pointer PAIRS.
+zp_tmp1 = zp_tmp0+1
+zp_tmp2 = zp_tmp0+2
 zp_vs_cch:                  .res 1 ; [bsp]; vsx_expl clamp copy of ch (doubled
                                   ; for H2 mover-jamb entries, 2026-08-25)
-VX1:                        .res 1
-   .res 25                              ; FREE $E3-$FB
+VX1:                        .res 26 ; [bsp+clip]; the TWO vertex structs
+                                   ; (VX2 = VX1+VX_STRIDE).  ONE reservation:
+                                   ; every access is VX1+k or VX1,X across the
+                                   ; whole 26 bytes, so the block must stay
+                                   ; contiguous whatever the layout does.
 LC_DY_LO:                   .res 1 ; [clip]
 LC_DY_HI:                   .res 1 ; [clip]
 LC_OFF_LO:                  .res 1 ; [clip]

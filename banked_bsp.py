@@ -372,7 +372,9 @@ class BankedBspRender(BspRender6502):
         self.sc.mpu.memory = self.bm     # swap in banked memory
         self.sc.SCREEN_START = 0x5800    # hw screens: the BANKED rig is the
         self.sc.SCREEN_SIZE = 5120       # only one with a framebuffer since
-        self.bm[0x70] = 0x58             # the parasite re-cut (SIZE=0 on the
+        from symmap import sym as _sym0  # by SYMBOL, never a literal: the zp
+        self.bm[_sym0('RASTER_ZP_SCRSTRT', banked=1)] = 0x58   # layout moves
+                                         # (the parasite re-cut: SIZE=0 on the
                                          # flat side made clear_screen a
                                          # no-op — a stale-residue class)
         # span_init (pool reset) lives in the clipper -> bank C, by symbol.

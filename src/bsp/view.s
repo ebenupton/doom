@@ -43,7 +43,7 @@ view_setup:
    CLC
    ADC #2                                  ; BIAS TRICK (2026-07-16): afn +=
    AND #$0F                                ; 512 (mod 4096) at the hoist, so
-   STA $3C                                 ; corner_phi emits r = phi+512
+   STA bca_afn+1                                 ; corner_phi emits r = phi+512
 ; bca_afn+1 = (ab>>4 + 2) & $0F            ; directly: the FOV window becomes
 ;                                          ; r in [0,1024] (right test = raw
 ;                                          ; compare, VATOX index = r), and
@@ -55,7 +55,7 @@ view_setup:
    ASL A
    ASL A
    ORA #EPSILON_F                          ; +EPS rides the hoist FREE (the
-   STA $3B                                 ; low nibble of ab<<4 is empty, so
+   STA bca_afn                                 ; low nibble of ab<<4 is empty, so
 ; bca_afn = ((ab<<4)&FF) + EPS             ; ORA = add, no carry): corner_phi
 ;                                          ; now emits r = phi+512+EPS, the
 ;                                          ; right window's biased operand
@@ -72,15 +72,15 @@ view_setup:
 ; plane hi bytes (wad_packed): classify compares go UNSIGNED hi-first;
 ; the ZCF subtractions cancel the bias — deltas stay bit-identical.
    LDA zp_br_px_h
-   STA $8D
+   STA bca_pxs
    LDA zp_br_px_x
    EOR #$80
-   STA $8E
+   STA bca_pxs+1
    LDA zp_br_py_h
-   STA $9B
+   STA bca_pys
    LDA zp_br_py_x
    EOR #$80
-   STA $9C
+   STA bca_pys+1
 ; (the |px|/|py| staging died with the delta-form conversion of the
 ; diagonal back-face test, 2026-07-11 — write-only since; deleted
 ; 2026-07-16 and the four zp_bf_p?m slots freed)

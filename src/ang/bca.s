@@ -23,11 +23,8 @@
 ; verdict from scratch, every time.
 ; ============================================================================
 
-; scratch for the cached routine (dead outside a check)
-rc_idxhi    = t1
 ; ($C4/$C5 freed 2026-07-15: the PSI pointer died with the plane
 ;  conversion — k rides Y and the senior page is an arm.)
-rc_bytehi   = val_hi                    ; bitmap byte offset idx>>6 (<=58, fits u8)
 rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
 
 

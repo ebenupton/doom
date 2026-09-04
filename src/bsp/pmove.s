@@ -1471,18 +1471,18 @@ pc_hi:
    LDA pm_nx,Y
    STA pm_ut                            ; b0
    LDA pm_nx+1,Y
-   STA $90,X                            ; b1 (becomes raw lo)
+   STA zp_br_pxraw_l,X                            ; b1 (becomes raw lo)
    LDA pm_nx+2,Y                        ; b2 rides A (becomes raw hi)
    ASL pm_ut
-   ROL $90,X
+   ROL zp_br_pxraw_l,X
    ROL A
    ASL pm_ut
-   ROL $90,X
+   ROL zp_br_pxraw_l,X
    ROL A
    ASL pm_ut
-   ROL $90,X
+   ROL zp_br_pxraw_l,X
    ROL A
-   STA $91,X
+   STA zp_br_pxraw_h,X
    LDA pm_ut                            ; = (b0 & $1F) << 3
    STA PM_FXW,X                         ; the EXACT-DESCENT feed
    INX
@@ -1494,20 +1494,20 @@ pc_hi:
    BCC pc_ax
 ; tie-broken doubled raws for the EXACT axis point-on-side:
 ; px2 = (raw << 1) | (world frac > 0), vs the baked 2*nx planes
-   LDA $90
+   LDA zp_br_pxraw_l
    ASL A
    STA zp_br_px2_l
-   LDA $91
+   LDA zp_br_pxraw_h
    ROL A
    STA zp_br_px2_h
    LDA PM_FXW
    BEQ pc_fy
    INC zp_br_px2_l                      ; bit 0 is clear after the ASL
 pc_fy:
-   LDA $92
+   LDA zp_br_pyraw_l
    ASL A
    STA zp_br_py2_l
-   LDA $93
+   LDA zp_br_pyraw_h
    ROL A
    STA zp_br_py2_h
    LDA PM_FXW+2

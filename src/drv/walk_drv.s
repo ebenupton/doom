@@ -62,6 +62,25 @@ RAWY_MAX = $0490        ;  1168
 ; BYTE identity.  It never RUNS on the copro (tubedrv is the driver
 ; there), so its HW touches (CRTC, keyboard, T1) are inert bytes.
 
+.importzp pa_ptr                      ; borrowed as the driver's own
+                                        ; table pointer: it is the angle
+                                        ; module's, dead between frames, and
+                                        ; DECLARED as a pair so the two bytes
+                                        ; stay adjacent under any zp layout
+.importzp zp_br_px_h
+.importzp zp_br_py_h
+.importzp zp_br_px_x
+.importzp zp_br_py_x
+.importzp zp_br_vz
+.importzp zp_br_smag
+.importzp zp_br_sneg
+.importzp zp_br_sone
+.importzp zp_br_cmag
+.importzp zp_br_cneg
+.importzp zp_br_cone
+.importzp RASTER_ZP_SCRSTRT
+.importzp plotq_n
+.importzp plotq_mode
 .import view_setup
 .import render_frame
 .import span_init
@@ -276,8 +295,8 @@ vsy0:
                                 ; (no bank restore: the init tail is main-
                                 ; only and anim_glue_init pages for itself)
     LDA #0
-    STA $A1
-    STA $A0   ; mode DIRECT until the first flip (the
+    STA plotq_mode
+    STA plotq_n   ; mode DIRECT until the first flip (the
                                 ; engine ships dv_emit_op = JMP plot_v, so
                                 ; the flag alone is consistent here)
     ; --- translation-coherence vertex cache (VXCACHE): zero the valid bitmap
@@ -373,19 +392,16 @@ frame:
                                                     ; frame with frac 0: the
                                                     ; 8-world-unit camera snap
                                                     ; = THE judder (2026-09-01)
-    STA $00                                         ; (old cell: harmless, kept
-                                                    ;  for any straggler reads)
     LDA pxl
-    STA $01
+    STA zp_br_px_h
     LDA pxh
-    STA $9D
+    STA zp_br_px_x
     LDA pyf
     STA zp_br_py
-    STA $02
     LDA pyl
-    STA $03
+    STA zp_br_py_h
     LDA pyh
-    STA $9E
+    STA zp_br_py_x
     JSR mv_reval                                    ; DOOM z (rides live lifts;
                                                     ; $90-$93 raws come from
                                                     ; pm_frame — see its ABI)
@@ -393,44 +409,44 @@ frame:
     LDA #BANK_C
     STA $FE30
     LDA #0
-    STA $ED
+    STA pa_ptr+1
     LDA angidx
     ASL A
-    ROL $ED
+    ROL pa_ptr+1
     ASL A
-    ROL $ED
+    ROL pa_ptr+1
     ASL A
-    ROL $ED
-    STA $EC
-    LDA $ED
+    ROL pa_ptr+1
+    STA pa_ptr
+    LDA pa_ptr+1
     CLC
     ADC #>(tabbase)
-    STA $ED
+    STA pa_ptr+1
     LDY #0
-    LDA ($EC),Y
-    STA $05
+    LDA (pa_ptr),Y
+    STA zp_br_smag
     INY
-    LDA ($EC),Y
-    STA $06
+    LDA (pa_ptr),Y
+    STA zp_br_sneg
     INY
-    LDA ($EC),Y
-    STA $07
+    LDA (pa_ptr),Y
+    STA zp_br_sone
     INY
-    LDA ($EC),Y
-    STA $08
+    LDA (pa_ptr),Y
+    STA zp_br_cmag
     INY
-    LDA ($EC),Y
-    STA $09
+    LDA (pa_ptr),Y
+    STA zp_br_cneg
     INY
-    LDA ($EC),Y
-    STA $0A
+    LDA (pa_ptr),Y
+    STA zp_br_cone
     INY
-    LDA ($EC),Y
+    LDA (pa_ptr),Y
     STA BCA_AB   ; view angle byte
     JSR anim_glue_tick                              ; advance movers (lazy patch)
     ; --- render into hidden buffer (cleared by previous flip_sched) ---
     LDA backhi
-    STA $70
+    STA RASTER_ZP_SCRSTRT
     LDA #BANK_L0
     STA $FE30
     JSR ENG_VIEW_SETUP   ; view_setup (real address, from the map)
@@ -541,7 +557,7 @@ flip_sched:
     ; --- finalize the run-ahead queue (fast frames only: the flip vsync
     ; never arrived mid-render, so the whole frame sits queued). Normal
     ; frames: the pump already cleared/drained/switched to direct. ---
-    LDA $A1                                         ; plotq_mode (zp.inc)
+    LDA plotq_mode                                         ; plotq_mode (zp.inc)
     BPL fs_done_q
     LDA $FE4D
     AND #2
@@ -559,7 +575,7 @@ fs_wq_stale:
     LDA #BANK_C
     STA $FE30   ; clear + drain both live
     JSR ENG_FB_CLR_BACK                             ;  in bank C
-    LDA $A0                                         ; plotq_n: 63 = no lines
+    LDA plotq_n                                         ; plotq_n: 63 = no lines
     CMP #63                                         ; (count-down empty home)
     BEQ fs_q_empty
     JSR ENG_PLOTQ_DRAIN                             ; (the pump forces at 64)
@@ -634,7 +650,7 @@ fs_go:
 ; after every enqueue (all enqueue sites are in the emit cascade, bank C
 ; live). n==0 after an append means the queue is FULL (64 entries). ---
 pq_pump:
-    LDA $A0
+    LDA plotq_n
     BMI pq_force   ; $FF = FULL (count-down)
     LDA $FE4D
     AND #2
@@ -747,7 +763,7 @@ rs_l:
     LDA #16
     STA angidx
     LDA #$06
-    STA $04
+    STA zp_br_vz
     STA ENG_PM_VZ
     LDA #0
     STA space_prev
@@ -761,7 +777,7 @@ rs_tab:
 mv_reval:
     JSR ENG_PMOVE_ZONLY
     LDA ENG_PM_VZ
-    STA $04
+    STA zp_br_vz
     RTS
 
 ; --- cur_park: park the hardware cursor outside both framebuffers ---------
