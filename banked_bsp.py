@@ -227,7 +227,9 @@ def build_banked(flatr):
 
     # --- bank B (BANK_WALK=7): node/ss SoA @ $8000 (SS_PHI rebased onto
     # the bank-A header base), L8/AE/VATOX behind the SoA, bbox @ ROM_BBOX_C,
-    # CPM, rcache BSS, ANIM CFG @ $B300 + SSMASK staging @ $B400 ---
+    # COLIDX, ANIM CFG @ $B300 + SSMASK staging @ $B400 (the corner memo
+    # planes and the extent cache BSS that used to sit at $A600-$AFFF went
+    # with those two caches, 2026-09-04) ---
     lb = bytearray(16384)
     lb[:off_verts] = bytes(rom_main[:off_verts])         # node/ss SoA pages
     # SS_PG rebase (RESURRECTED 2026-08-29, one line per loader): the
@@ -289,8 +291,6 @@ def build_banked(flatr):
         else:
             lb[_ca - 0x8000:_ca - 0x8000 + len(_cb)] = _cb
     # corner-phi memo validity: KDXH plane ships $80-filled — the
-    # probe's KDXH compare doubles as the never-written test (no EP plane).
-    lb[abi.CPM_KDXH - 0x8000:abi.CPM_KDXH - 0x8000 + 128] = b'\x80' * 128
     bm.define_bank(BANK_L2, lb)                   # BANK_L2 == BANK_WALK (7)
 
 

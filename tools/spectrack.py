@@ -217,9 +217,7 @@ def main():
         # VXCACHE/RCACHE/D and the VYCACHE are genuinely warm.
         import abi, pygame as pg
         mem = sc.mpu.memory
-        list.__setitem__(m, abi.D_ENABLE, 1)
         list.__setitem__(m, abi.VXCACHE_ENABLE, 1)
-        list.__setitem__(m, sym('RCACHE_ENABLE'), 1)
         D_FWD = sym('D_FWD')
         px, py, ab = 3000.0, -2900.0, 129     # walk INTO the zigzag depth
         for k in range(4 + n):

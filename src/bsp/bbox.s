@@ -29,29 +29,17 @@
 ;
 ; Pseudocode:
 ;   boxp = rom_bbox + node*16 + side*8
-;   vis, ilo, ihi = bbox_check_angle(boxp, px, py, ab)   # bca_check_op
+;   vis, ilo, ihi = box_classify(boxp, px, py, ab)
 ;   if not vis: return 0                                 # culled/behind
 ;   return span_has_gap(ilo, ihi)      # occlusion query over [ilo, ihi)
 ; ============================================================================
-; ============================================================================
-; Forward-coherence bbox cache ("D"): REVIVED 2026-07-21 on the rcache
-; architecture and moved into src/ang/bca.s (dbox_check) — the frame
-; class is a vector (zp_bv_entry), the storage is the rotation cache's
-; planes + COMPUTED bitmap (one class live at a time, wiped on entry),
-; and the store wraps the pristine per-side tree call at the probe's
-; miss (serve-or-compute+store, "cache at birth" for (ilo, ihi)).
-; The old wrapper generation (br_bbox_visible_d, br_dcache_frame, the
-; $0210-$03F7 code planes, D_MODE/D_SMODE/zp_bv_mode) died with this —
-; $0210-$03F7 are FREE again. D_ENABLE/D_FWD (abi.inc) remain the
-; driver contract: D_FWD = this frame's move was forward-only.
-; ============================================================================
-.export D_ENABLE, D_FWD
 
 ; ============================================================================
-; bbox_visible — THE walk-facing bbox entry (2026-07-18, SMC-free;
-; vectored 2026-07-20). bca_frame points zp_bv_entry at the frame
-; class's entry: bbox_check_angle (standing: rotation-cache probe),
-; dbox_check (forward run: D probe), box_classify (pristine).
+; bbox_visible — THE walk-facing bbox entry.  It is a plain equate for
+; box_classify: every frame classifies from scratch.  (Until 2026-09-04
+; this was a vector through zp_bv_entry, pointing at one of three frame
+; classes — a rotation-cache probe, a forward-coherence probe, or the
+; pristine classifier.  Both caches are gone; see src/ang/bca.s.)
 ;   in : zp_node_ch_l/zp_bbox_side = box identity; frame ZP preset
 ;   out: C = combined verdict (has_gap over the check's extent) —
 ;        C-only since 2026-07-26; the walk branches BCS/BCC

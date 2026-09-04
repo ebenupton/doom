@@ -10,7 +10,7 @@ rules statement) case for case, in BOTH builds:
         third addend byte and the NT_GEN=2 engine-wide classify bug).
   mom   pm_frame vs colmap.move_frame: multi-frame walks (walk, turn,
         friction, clamp, chunked application, wall projection, the
-        axis fallback and D_FWD) from spawn + port-adjacent starts.
+        axis fallback) from spawn + port-adjacent starts.
 
 Movers are POSED explicitly (rest + halfopen): calling anim_init from a
 harness wedges the banked build with mover WS left zero.
@@ -121,7 +121,7 @@ class Rig:
         # the fuzz exercises the certificate/replay/fast-commit paths.
         from symmap import sym as _sy2
         for nm, v in (('pmt_ok', 0), ('pm_lmv', 0), ('pm_okf', 0),
-                      ('pmc_fld', 0), ('pmc_dfwd', 0xFF)):
+                      ('pmc_fld', 0)):
             self.mem[_sy2(nm, banked=self.banked)] = v
 
     # --- try suite -----------------------------------------------------
@@ -170,7 +170,6 @@ class Rig:
         self.mem[abi.DV_ANGIDX] = angidx & 0xFF
         self.mem[self.vz] = z & 0xFF
         self.mem[abi.PM_TURNREM] = turnrem
-        self.mem[abi.D_FWD] = 0xEE                  # poison: must be written
         self.run(self.frame_e, a=fields, x=inbits)
         # (the retired-momentum stay-zero assert died with the slots
         # themselves — the 2026-08-26 low-RAM map deleted PM_MOMX/Y)
@@ -178,7 +177,7 @@ class Rig:
         return ((self._r24(abi.DV_PXF), self._r24(abi.DV_PYF),
                  vz - (256 if vz >= 128 else 0),
                  self.mem[abi.DV_ANGIDX],
-                 self.mem[abi.PM_TURNREM]), self.mem[abi.D_FWD])
+                 self.mem[abi.PM_TURNREM]))
 
 
 def suite_try(rig, verbose):
@@ -286,17 +285,19 @@ def suite_mom(rig, verbose):
                                               bool(bits & F), bool(bits & B),
                                               bool(bits & L), bool(bits & R),
                                               ws)
-                        a_st, a_fwd = a[:5], a[5]
-                        b_st, b_fwd = rig.frame(py_st, fields, bits)
+                        a_st = a[:5]         # (the 6th field, the python
+                                             #  model's D_FWD, died with the
+                                             #  forward-coherence cache)
+                        b_st = rig.frame(py_st, fields, bits)
                         py_st = b_st
                         cases += 1
-                        if a_st != b_st or a_fwd != b_fwd:
+                        if a_st != b_st:
                             bad += 1
                             if verbose and bad <= 6:
                                 print(f'  {pname}/start{si}/ang{ang}/{sname} f{fi} '
                                       f'({fields}f,bits={bits})')
-                                print(f'    py={a_st} dfwd={a_fwd}')
-                                print(f'    65={b_st} dfwd={b_fwd}')
+                                print(f'    py={a_st}')
+                                print(f'    65={b_st}')
                             a_st = b_st          # resync: report each frame's
                                                  # own divergence, not an echo
                             rig.cold()           # (the resync itself is a

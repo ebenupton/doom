@@ -81,5 +81,3 @@ def load_angle_module(mem, c02=None):
     # impossible dx hi byte, |corner - px| < 2048) — the probe's KDXH
     # compare doubles as the never-written test; the EP plane is gone.
     import abi
-    for i in range(128):
-        mem[abi.CPM_BASE_FLAT + 0x80 + i] = 0x80

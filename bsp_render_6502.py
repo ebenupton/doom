@@ -199,11 +199,6 @@ class BspRender6502:
                 mem[_d + i] = rom_main[_off + i]
         for i, v in enumerate(bbox):                     # bbox corner planes
             mem[ROM_BBOX_BASE + i] = v
-        import abi as _abi                               # CPM_KDXH validity:
-        _d = _abi.CPM_KDXH_FLAT if hasattr(_abi, 'CPM_KDXH_FLAT') else \
-            (_abi.CPM_BASE_FLAT + 0x80)                  # plane ships $80-filled
-        for i in range(128):
-            mem[_d + i] = 0x80
 
         # ---- bank C data (CBITS run + the bank A window hole) ----
         import doom_wireframe as dw

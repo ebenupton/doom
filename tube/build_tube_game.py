@@ -111,7 +111,6 @@ def write_tube_syms():
                      ('T_ANIM_ENABLE', 'ANIM_ENABLE'),
                      # HUD class letter (2026-09-04): the packet's last byte
                      # these two class entries, as src/hud.s does
-                     ('T_CPM_KDXH', 'CPM_KDXH'),
                      # PMOVE: the parasite runs the SAME DOOM collision /
                      # slide / frame-rate-compensated walk as walk_drv
                      # (2026-08-23).  pm_frame owns rotation, position,
@@ -191,7 +190,6 @@ def write_tube_syms():
                      ('T_DV_PYH', _flat('DV_PYH')),
                      ('T_PM_TURNREM', _flat('PM_TURNREM'))):
             f.write(f"{t} = &{v:04X}\n")
-        f.write(f"T_RCACHE_STATE = &{abi.RCACHE_STATE_FLAT:04X}\n")
         import colmap as _cm
         f.write(f"T_USEVEC = &{_cm.USEVEC_FLAT:04X}\n")
         # TRIPWIRE lives in src/layout.inc (ca65). Parse it rather than
@@ -205,7 +203,6 @@ def write_tube_syms():
         if _twv:
             f.write(f"T_TW_CHECK = &{fsym('tw_check'):04X}\n")
             f.write(f"T_ZP_TW = &{fsym('zp_tw'):04X}\n")
-        f.write(f"T_RCACHE_LEN = &{abi.RCACHE_STATE_LEN & 0xFF:02X}\n")
         f.write(f"T_VXCACHE_STATE = &{abi.VXCACHE_STATE:04X}\n")
         f.write(f"T_VXCACHE_LEN = &{abi.VXCACHE_STATE_LEN:02X}\n")
         f.write(f"T_VXCACHE_ENABLE = &{abi.VXCACHE_ENABLE:04X}\n")

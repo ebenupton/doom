@@ -75,7 +75,6 @@ ct = run('compare_traversal', ['compare_traversal.py'],
 run('compare_subsector', ['compare_subsector.py'],
     lambda o: (re.search(r'TOTAL:.*0 pixel/span-affecting, 0 px', o) is not None
                and re.search(r'TOTAL: \d+/([1-9]\d*) subsectors', o) is not None))
-run('rotcache_check', ['tools/rotcache_check.py'], lambda o: 'PASS' in o and 'MISMATCH' not in o)
 run('vxcache_check', ['tools/vxcache_check.py'], lambda o: 'PASS' in o and 'MISMATCH' not in o)
 # PHASE 4 LANDED (2026-09-02): the copro runs the parasite map -- boot
 # stub at $7800 (transient, the VXCACHE X-plane hole), resident glue +

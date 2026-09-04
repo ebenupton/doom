@@ -34,7 +34,7 @@ ABI = [
     ('BANK_SEG',       4,      None, 'sideways bank A: seg headers+DIRs, verts, recips, VYCACHE, TABL0 — held for seg stages 1-4'),
     ('BANK_C',         6,      None, 'sideways bank: clipper + rasteriser + HUD'),
     ('BANK_L2',        7,      None, 'legacy alias for BANK_WALK'),
-    ('BANK_WALK',      7,      None, 'sideways bank B: node SoA, L8/AE/VATOX, bbox, CPM, rcache, ANIM CFG — held for the whole BSP walk'),
+    ('BANK_WALK',      7,      None, 'sideways bank B: node SoA, L8/AE/VATOX, bbox, COLIDX, ANIM CFG — held for the whole BSP walk. FREED 2026-09-04: the extent cache psi planes $A900-$AEFF + RCACHE_STATE $AF00 (137 B), and the corner memo 6 planes $A600-$A8FF (768 B)'),
     # Jump tables are GONE (2026-07-16, forbidden): engine entry points
     # (view_setup / render_frame / anim_tick / anim_init / clipper
     # entries) are resolved by SYMBOL from the linker map — beebasm via
@@ -54,7 +54,7 @@ ABI = [
     ('SQR_MIR_HI',     'SQR_MIR_LO+$300', None, 'even-mirror hi page: [k] = f(256-k)>>8, [0] = f(256)>>8 = 64.'),
     ('SQR_HI',         'SQR_MIR_LO+$400', None, 'qsqr hi bytes (f 0..255)'),
     ('SQR2_HI',        'SQR_MIR_LO+$500', None, 'qsqr hi bytes (f 256..510) — adjacent above SQR_HI.'),
-    ('DRV_ORG',        0x0F00, None, '$1A00 -> $0F00 2026-08-26 (low-RAM consolidation; the driver heads the ONE engine code area). walk/anim driver entry (!BOOT CALLs this). $1E00 -> $1A00 2026-08-19 (the -$400 window slide, bank-B code eviction): the exception window is $1A00-$25FF — banked walk_drv+PMOVE, flat VXCACHE_YLO/YHI + CPM keys + records + PM_SCRATCH + PMH.'),
+    ('DRV_ORG',        0x0F00, None, '$1A00 -> $0F00 2026-08-26 (low-RAM consolidation; the driver heads the ONE engine code area). walk/anim driver entry (!BOOT CALLs this). $1E00 -> $1A00 2026-08-19 (the -$400 window slide, bank-B code eviction): the exception window is $1A00-$25FF — banked walk_drv+PMOVE, flat VXCACHE_YLO/YHI + records + PM_SCRATCH + PMH (the CPM keys that used to live there went with the corner memo 2026-09-04).'),
     ('DRV_VARS',       0x0D10, None, 'UNIFIED both builds 2026-08-26: the 16-byte hole in the WORK segment between PM_FXW and the scalars ($0B10-$0B1F) — one address, no flat/tube fork (the $1180 flat home died with the map). walk driver variable block (layout below). Banked base $1B80 -> $1BF0 2026-08-24: the block sat in the MIDDLE of walk_drv\'s ORG\'d span, capping the code at 384 B, and the OSBYTE font probe did not fit. The span is code | glue (DRV_GLUE) | vars | input+flip (DRV_CLR), so the vars now occupy the 16 free bytes below DRV_CLR and the code\'s real limit is DRV_GLUE -- which is what walk_drv now asserts, at both ends. FLAT is $1180 because $1B00-$1BFF there is the SENIOR page of VXCACHE_YLO: the seg pipeline cached vertices 384..396 straight over the old block -- vertex 387 landed on DV_PXL and the player X jumped mid-turn. Banked never saw it (VXCACHE lives in bank A), so only the TUBE, which runs the flat engine with a driver, was corrupted. $1180 verified clear by poisoning $1100-$11FF and running render+anim_tick+pm_frame.'),
     ('DV_ANGIDX',      'DRV_VARS+0',  None, 'view angle index 0..63 (angle byte = idx*4)'),
     ('DV_BACKHI',      'DRV_VARS+1',  None, 'hidden-buffer page hi ($58/$6C)'),
@@ -76,39 +76,25 @@ ABI = [
     ('DRV_GLUE',       0x10A0, None, 'anim/HUD glue pocket'),
     ('DRV_CLR',        0x1100, None, 'input block + flip scheduler; the unrolled framebuffer clears moved to BANK C 2026-08-16, and the whole driver slid $2200 -> $2100 with DRV_ORG 2026-08-17 (2026-08-14: the sincos overlay moved to bank A $BA00 with STEPTAB/USEVEC; the driver packs below the engine PMOVE region)'),
     ('PM_FXW',         0x0D00, None, 'world-fraction bytes of the CANDIDATE/committed position, x at +0 / y at +2 (4-byte block $096B-$096E, freed by the u8 BSP child staging retirement). Staged by pmf_cand = (candidate 8.8-prescaled byte0) << 3; consumed by the EXACT node point-on-side (axis ties + node_band) and nowhere else. Harnesses that poke the $90-$93 raws directly MUST poke these too (zero for integer positions).'),
-    ('D_ENABLE',       0x0D7E, None, 'forward-coherence bbox cache master switch'),
-    ('D_FWD',          0x0D7F, None, 'per-frame flag: move was forward-only'),
-    ('VXCACHE_STATE',      0x0900, None, 'THE BITMAP PAGE: VRCACHE_VALID+VDONE+VXCACHE_VALID+RCACHE_COMPUTED (boot zeroes the whole page)'),
+    ('VXCACHE_STATE',      0x0900, None, 'THE BITMAP PAGE: VRCACHE_VALID+VDONE+VXCACHE_VALID (boot zeroes the whole page; the 59 B RCACHE_COMPUTED bitmap went with the extent cache 2026-09-04)'),
     ('VXCACHE_STATE_LEN',  0x100,  None, 'bytes to zero at boot (the whole bitmap page)'),
     ('VXCACHE_ENABLE',     0x0D5D, None, 'translation vertex cache switch (scalars block $05xx -> $1Dxx sqr swap -> $19xx window slide -> $19DB->$19DD 2026-08-22 to clear the span pool 15th/16th planes; vxcache_prev_ab follows it)'),
-    ('RCACHE_STATE',   *_B(0x2F00), 'rotation cache header+bitmaps (bank WALK)'),
-    ('RCACHE_STATE_LEN',0x89,  None, 'bytes to zero at boot'),
-    ('RCACHE_ENABLE',  *_B(0x2F88), 'rotation-coherence bca cache switch (STATE+$88)'),
-    ('CPM_BASE',       *_B(0x2600), 'corner-phi memo: 128-slot xor hash, 6 planes. This is the KEY head — 4 key planes, $200 long (the value planes hang off CPM_PSI_BASE, split out flat-side 2026-08-17). Banked $A600 in bank WALK (two-bank re-cut 2026-08-13). SCAR: an earlier home sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.'),
-    ('CPM_KDXL',       'CPM_BASE+$000', None, 'memo key: corner dx lo'),
-    ('CPM_KDXH',       'CPM_BASE+$080', None, '... dx hi; DOUBLES as validity: plane ships $80-filled ($80 = impossible dx hi), so there is no EP plane'),
     # The dy key planes split out flat-side 2026-08-17 for the same reason
     # the psi planes did: CODE's head moved down again, to $2A00, and flat
     # has to clear the page. They land on the page RECIP_S vacated when it
     # left main for bank A. Banked keeps the memo contiguous.
-    ('CPM_KDY_BASE',   'CPM_BASE+$100', None, 'dy key planes head (inline after the keys, both builds)'),
-    ('CPM_KDYL',       'CPM_KDY_BASE+$000', None, '... dy lo'),
-    ('CPM_KDYH',       'CPM_KDY_BASE+$080', None, '... dy hi'),
     # The value planes are addressed independently of the key planes (bca.s
     # indexes each by X), so they need not abut the keys. Split out 2026-08-17
     # so the FLAT memo stops occupying $2B00-$2BFF: CODE's head moved down to
     # $2B00 and flat must match banked below $57FF. Banked keeps them inline.
-    ('CPM_PSI_BASE',   'CPM_BASE+$200', None, 'psi value planes head (inline after the keys, both builds)'),
-    ('CPM_PSIL',       'CPM_PSI_BASE+$000', None, 'memo value: psi lo'),
-    ('CPM_PSIH',       'CPM_PSI_BASE+$080', None, '... psi hi (last plane; the key planes end at CPM_BASE+$200)'),
     # Player-movement collision map (colmap.py, 2026-08-14). Banked =
     # bank WALK free windows (same bank as the node SoA — one paging
     # context for the whole movement test); flat = the TUBE parasite map
     # (the replaced raster pocket $7600-$82FF + the high-table area).
     # colmap.blobs() asserts every blob against these homes.
-    ('COLIDX_BASE',    *_B(0x2F8A), 'collision blockmap: 36 x (u16 list addr, u8 count) + the u8 lists (banked: $B4A4 -> $AB00 -> $AF8A 2026-08-15 — off the SSMASK staging page, then off the rcache PSI PLANES $A900-$AEFF; now after RCACHE_STATE, ends $B197)'),
+    ('COLIDX_BASE',    *_B(0x2F8A), 'collision blockmap: 36 x (u16 list addr, u8 count) + the u8 lists (banked: $B4A4 -> $AB00 -> $AF8A 2026-08-15 — off the SSMASK staging page, then off the rcache PSI PLANES $A900-$AEFF; now after the freed RCACHE_STATE page, ends $B197)'),
     ('COLSEG_BASE',    *_B(0x38C4), 'collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, center-relative)'),
-    ('CYMIN_BASE',     *_B(0x3200), 'per-colseg min y cell ((ymin+1584)>>7 clamped u8), indexed by the raw collision index — the column scan prescreen (2026-08-29). Banked: the COLIDX-to-ANIM gap ($B198-$B2FF). Flat: the hole PMOVE vacated 2026-08-23 (COLSEG ends $7F0F, RC_P2L_0 owns $8100). NOT $D700/$D800: CPM_PSI planes + RECIP_S live there — that stomp garbled the tube copro 2026-08-29'),
+    ('CYMIN_BASE',     *_B(0x3200), 'per-colseg min y cell ((ymin+1584)>>7 clamped u8), indexed by the raw collision index — the column scan prescreen (2026-08-29). Banked: the COLIDX-to-ANIM gap ($B198-$B2FF). Flat: the hole PMOVE vacated 2026-08-23 (COLSEG ends $7F0F, RC_P2L_0 owns $8100). NOT $D700/$D800: RECIP_S lives there (the CPM_PSI planes did too until 2026-09-04) — that stomp garbled the tube copro 2026-08-29'),
     ('CYMAX_BASE',     *_B(0x37F8), 'per-colseg max y cell — see CYMIN_BASE. Banked: the free page below the DIR planes (SS_CNT owns $B500). Flat: 199 entries end $80C6, clear of RC_P2L_0 $8100'),
     ('CYPORT_BASE',    *_B(0x32CC), 'per-PORT packed y-cell nibbles ((ymaxcell<<4)|ymincell, 256-unit cells), indexed by idx-COL_N_SOLID — the port arm of the scan prescreen (2026-08-29). Rides the CYMAX page tail both builds (banked $B600 page is free below the DIR planes; flat CYMAX ends $80CB, RC_P2L_0 walls $8100)'),
     ('SIL_BASE',       *_B(0x3198), 'silent-line tripwire: 36 per-column ((clear_lo256<<4)|(clear_hi256+1)) — the widest y band of 256-unit cells free of BOTH unrecorded sector lines and flooded void ($F0 = none). A box inside its columns bands proves a key-stable move cannot change subsector (the same-ss fast commit, 2026-08-29). Flat: the walled CLIPF tail $7180; banked: the COLIDX-to-CYMIN gap $B198'),

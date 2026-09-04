@@ -1,44 +1,28 @@
 .import vc_bit_mask                     ; defq.s: 1 << (n & 7) table
-; Per-bbox cache, keyed by k = node*2 + side (the box ordinal):
-;   RC_P1L/P2L/PH planes : psi1/psi2 (12-bit; hi nibbles packed in PH)
-;   RCACHE_COMPUTED      : 1 bit/bbox — psi valid for the cache position
+; ============================================================================
+; TWO CACHES USED TO LIVE IN THIS FILE.  BOTH ARE GONE — read this before
+; reintroducing either.
 ;
-; Frame classing is the zp_bv_entry/zp_tail_vec vector pair (set in
-; bca_frame, consumed by indirect JMPs): moving frames dispatch
-; straight to box_classify — no probe, no stores, bitmap
-; stale-but-unread. The moved->stationary edge clears RCACHE_COMPUTED
-; and arms the vectors; standing frames then probe here and entries
-; repopulate lazily.
+; 1. The bbox EXTENT cache (rcache + the D/forward-coherence wheel), keyed
+;    by box ordinal, storing psi1/psi2 in the RC_P1L/P2L/PH planes with an
+;    RCACHE_COMPUTED validity bit.  Stripped 2026-09-04 (cadcec0): it cost
+;    +2.06% on the armour walk to remove and freed 6 pages of bank B
+;    ($A900-$AEFF), RCACHE_STATE's 137 B, RCACHE_COMPUTED's 59 B and 885 B
+;    of code.  The walk got that back and more from the dynamic
+;    always-descend bit (4cab6b5).
+; 2. The corner-phi MEMO: a 128-slot xor-hashed key/psi plane set probed at
+;    each corner entry.  Retired 2026-09-04 (b872178) at a 15.5% hit rate —
+;    walk -0.54%, suite -0.77%, heavy -1.01% WITHOUT it, because the
+;    machinery (hash per fetch, staggered key bank per miss, psi store,
+;    slot stash) cost more than the hits bought.  Its key planes had a
+;    SECOND job — handing the shared-axis rows their raw delta back across
+;    the converters' in-place negation — and that is now four bytes of
+;    scratch (corner_sx/corner_sy) filled by ZCF_SAVE_D*.
+;
+; What is left here is a straight classifier: box_classify computes every
+; verdict from scratch, every time.
+; ============================================================================
 
-; PSI store = page-split SoA planes (2026-07-15; re-keyed by SIDE
-; 2026-07-20): page = zp_bbox_side (0/1), byte index = node (u8,
-; n_nodes <= 256 asserted at pack time) — no k derivation, no carry
-; games. psi values are 12-bit, so the two
-; hi nibbles PACK into one plane: PH = psi1_hi | psi2_hi<<4. Three
-; planes x 2 pages; the side pages are independently placed, so
-; the flat set scatters over audited free fragments and the $5000
-; CODE-tail carve is GONE (flat CODE now runs to $5800 — main_tail).
-;
-; FLAT P2L_1 $E800 -> $E500 and PH_0 $E900 -> $E600, 2026-08-24: the two
-; old bases sat ON TOP of colmap's flat tables. PH_0 ($E900-$E9DB)
-; covered MV_MINPASS, the whole of USETAB and MV_SS_ID/INFO; P2L_1
-; ($E800-$E8DB) covered the tail of SS_VZ. Every armed frame sprayed
-; cached psi bytes over them, so on the TUBE (the only build that runs
-; the flat engine with a driver) the doors whose use lines sat in the
-; trampled tail stopped opening -- some doors worked, some did not,
-; depending on which node ids the cache had armed. The banked side hit
-; exactly this once before, in the other direction, and colmap.py's
-; blobs() carries the scar tissue for it ("$AB00 fix landed ON THE
-; RCACHE PSI PLANES"); nobody had checked the flat side. Both bases
-; keep base+219 inside one page, which is the property the odd-looking
-; $E402 is protecting. tools/test_table_overlap.py now gates the whole
-; cross-product, both builds.
-; (RC_P1L/RC_P2L/RC_PH psi planes -- 6 pages of bank B, $A900-$AEFF --
-;  and RCACHE_COMPUTED -- 59 B on the bitmap page -- FREED 2026-09-04.)
-.assert RCACHE_STATE + $88 = RCACHE_ENABLE, error, "rcache layout drifted from abi.inc"
-; RCACHE_ENABLE comes from abi.inc; nonzero -> cache may engage (drivers set it;
-                                        ; harness default 0 keeps every existing test
-                                        ; on the original path, byte- and cycle-exact)
 ; scratch for the cached routine (dead outside a check)
 rc_idxhi    = t1
 ; ($C4/$C5 freed 2026-07-15: the PSI pointer died with the plane
@@ -53,10 +37,10 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
 ;   box_classify     locate the viewer against a child box (ZC segment)
 ;   CLASSIFY_TREE    one side's classifier: x ladder + L/M/R columns,
 ;                    every corner arm inlined at its leaf
-;   corner_phi_*     four sign-class entries: corner-phi memo probe +
-;                    |delta| converters (ANGX window flat, linear banked)
+;   corner_phi_*     four sign-class entries: the |delta| converters
+;                    (ANGX window flat, linear banked)
 ;   lf_ns            the no-swap log2/atanexp pipeline (ta from |dx|,|dy|)
-;   comb .. cp_havepsi  octant compose, psi memo store, r = afn - psi
+;   comb .. cp_havepsi  octant compose, r = afn - psi
 ;
 ; The whole pipeline is ONE source run: entries, width arms, lf_ns and
 ; the compose chain sit in a single section, so every load-bearing
@@ -66,21 +50,17 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
 ;   Y = node        owned by the classify caller; survives the whole
 ;                   tree; the arms re-load it only after corner_phi
 ;                   returns r-lo in Y
-;   X = memo slot   hashed by the fetch macros ((dx^dy)&$7F), consumed
-;                   by the probe, RETURNED as the slot on both exits
-;                   (the hit serve preserves it; the miss path's psi
-;                   store reloads it) — the memo-shared rows read the
-;                   key planes X-direct on the strength of this
+;   X = octant      set at the corner entry and held to the exit (it
+;                   was the memo slot until 2026-09-04)
 ;   A = pa_dy+1     every fetch macro exits with the y-delta hi byte
-;                   in A; probe stage 0 compares KDYH with no load
+;                   in A, which is the corner entry's contract
 ; ============================================================================
 
 ; ---------------------------------------------------------------------------
 ; ZCF — one corner fetch: delta = plane - viewer, both axes, s16.
-; The CALLER owns Y = node. The memo slot hash is computed mid-macro,
-; where dy-lo is in A and dx is already banked: EOR/AND/TAX preserve
-; the carry the following y-hi SBC needs, so the hash rides for free.
-; Exits with A = pa_dy+1 (the entry A-contract).
+; The CALLER owns Y = node.  Exits with A = pa_dy+1 (the entry
+; A-contract).  (The memo's (dx^dy)&$7F slot hash used to ride in the
+; middle of this, where dy-lo was already in A; it went with the memo.)
 ; ---------------------------------------------------------------------------
 .macro ZCF s, xl, yl, ck
 .ifblank ck
@@ -100,29 +80,19 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
    LDA yl+(s)*$100,Y                                                      ;# |          0.8
    SBC bca_pys                                                            ;#            0.0
    STA pa_dy                                                              ;# |          0.5
-.ifdef CPM_MEMO
-   EOR pa_dx                               ; slot = (dx ^ dy) & $7F, hashed
-   AND #$7F                                ; here where dy-lo is in A —   ;#            0.4
-   TAX                                     ; EOR/AND/TAX keep C for the SBC
-.endif
    LDA yl+$200+(s)*$100,Y                                                 ;#            0.0
    SBC bca_pys+1                                                          ;# |          0.6
    STA pa_dy+1
 .endmacro
 ; Partial fetches for the axis-sharing rows: the OTHER delta must
-; already be valid (carried over, or memo-reloaded first) — the hash
-; reads it. ZCF_DX exits with A = pa_dx+1, so its users re-load dy-hi
-; before the JSR to honour the entry A-contract.
+; already be valid (carried over, or restored from scratch first).
+; ZCF_DX exits with A = pa_dx+1, so its users re-load dy-hi before the
+; JSR to honour the entry A-contract.
 .macro ZCF_DX s, xl
    SEC                                                                    ;#            0.0
    LDA xl+(s)*$100,Y                                                      ;#            0.0
    SBC bca_pxs                                                            ;#            0.0
    STA pa_dx                                                              ;#            0.1
-.ifdef CPM_MEMO
-   EOR pa_dy                               ; slot hash (pa_dy already valid) ;#            0.0
-   AND #$7F                                                               ;#            0.0
-   TAX
-.endif
    LDA xl+$200+(s)*$100,Y
    SBC bca_pxs+1                                                          ;#            0.1
    STA pa_dx+1
@@ -132,66 +102,41 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
    LDA yl+(s)*$100,Y
    SBC bca_pys                                                            ;#            0.0
    STA pa_dy                                                              ;#            0.0
-.ifdef CPM_MEMO
-   EOR pa_dx                               ; slot hash (pa_dx carried over) ;#            0.0
-   AND #$7F                                                               ;#            0.0
-   TAX
-.endif
    LDA yl+$200+(s)*$100,Y                                                 ;#            0.3
    SBC bca_pys+1
    STA pa_dy+1
 .endmacro
 ; ---------------------------------------------------------------------------
-; ZCF_MEMO_* — reload a shared-axis RAW delta from the memo key planes,
-; X-direct. Sound on both of c1's exits: a miss just BANKED the raw key
-; at the slot, and a hit means the planes MATCHED it — either way
-; CPM_KD*[c1's slot] holds c1's raw deltas, and X = that slot by the
-; return contract. Must run BEFORE the hashing fetch overwrites X with
-; c2's slot. This is what un-does the N-class in-place negation for the
-; rows whose corners share a plane.
+; ZCF_RESTORE_* — give a shared-axis row its RAW delta back after c1's
+; converter negated it in place.  ZCF_SAVE_D* stashed it in four bytes
+; of scratch before the JSR.  (Until 2026-09-04 this read the memo's key
+; planes X-direct instead, which was free at write time but is what kept
+; those 768 bytes alive; see the file header.)
 ; ---------------------------------------------------------------------------
-.macro ZCF_MEMO_DX
-.ifndef CPM_MEMO
-   LDA cpm_sx                              ; from scratch: no key planes
+.macro ZCF_RESTORE_DX
+   LDA corner_sx                           ; the scratch ZCF_SAVE_DX filled
    STA pa_dx
-   LDA cpm_sx+1
+   LDA corner_sx+1
    STA pa_dx+1
-.else
-   LDA CPM_KDXL,X
-   STA pa_dx
-   LDA CPM_KDXH,X
-   STA pa_dx+1
-.endif
 .endmacro
-; stash the raw shared delta BEFORE c1's converter eats it
+; stash the raw shared delta BEFORE c1's converter negates it in place
 .macro ZCF_SAVE_DX
-.ifndef CPM_MEMO
    LDA pa_dx
-   STA cpm_sx
+   STA corner_sx
    LDA pa_dx+1
-   STA cpm_sx+1
-.endif
+   STA corner_sx+1
 .endmacro
 .macro ZCF_SAVE_DY
-.ifndef CPM_MEMO
    LDA pa_dy
-   STA cpm_sy
+   STA corner_sy
    LDA pa_dy+1
-   STA cpm_sy+1
-.endif
+   STA corner_sy+1
 .endmacro
-.macro ZCF_MEMO_DY
-.ifndef CPM_MEMO
-   LDA cpm_sy
+.macro ZCF_RESTORE_DY
+   LDA corner_sy                           ; the scratch ZCF_SAVE_DY filled
    STA pa_dy
-   LDA cpm_sy+1
+   LDA corner_sy+1
    STA pa_dy+1
-.else
-   LDA CPM_KDYL,X
-   STA pa_dy                                                              ;#            0.0
-   LDA CPM_KDYH,X
-   STA pa_dy+1
-.endif
 .endmacro
 ; ---------------------------------------------------------------------------
 ; ZARM family — a corner arm: fetch corner 1, take its phi, fetch
@@ -244,7 +189,7 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
    JSR e1
    STA bca_p1+1
    STY bca_p1                                                             ;#            0.0
-   ZCF_MEMO_DY                             ; c1's slot read FIRST — the
+   ZCF_RESTORE_DY                             ; c1's slot read FIRST — the
    LDY zp_node_ch_l                        ; hashing ZCF_DX then computes
    ZCF_DX s, x2                            ; c2's slot into X
    LDA pa_dy+1                             ; entry A-contract: dy hi
@@ -257,7 +202,7 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
    JSR e1
    STA bca_p1+1
    STY bca_p1
-   ZCF_MEMO_DX                             ; c1's slot read FIRST
+   ZCF_RESTORE_DX                             ; c1's slot read FIRST
    LDY zp_node_ch_l
    ZCF_DY s, y2
    JSR e2
@@ -798,19 +743,16 @@ ct_f_r2out:
 
 
 ; ============================================================================
-; CPM_ENTRY — one sign-class corner_phi entry: probe the corner-phi
-; memo, and on a miss bank the key, convert to |dx|/|dy| and jump into
-; the shared lf_ns pipeline. Four instances, one per (sign dx, sign dy)
-; class: each arm's row fixes both corners' delta signs statically, so
-; the converters dead-code the sign tests — P-axes are already their
-; own absolute value, N-axes negate pa_dx/pa_dy IN PLACE.
+; CORNER_ENTRY — one sign-class corner_phi entry: convert to |dx|/|dy|
+; and jump into the shared lf_ns pipeline. Four instances, one per
+; (sign dx, sign dy) class: each arm's row fixes both corners' delta
+; signs statically, so the converters dead-code the sign tests — P-axes
+; are already their own absolute value, N-axes negate pa_dx/pa_dy IN
+; PLACE (which is why the shared-axis rows stash first, ZCF_SAVE_D*).
 ;
-; ENTRY CONTRACT: X = memo slot (hashed by the fetch macros),
-;                 A = pa_dy+1 (the fetch's exit state).
-; RETURN CONTRACT: r-hi in A, r-lo in Y, X = slot again — the hit
-;                 serve never touches X, and the miss path's psi store
-;                 reloads it. Harness drivers must mirror the entry
-;                 registers (test_slope_div sets mpu.x/mpu.a).
+; ENTRY CONTRACT: A = pa_dy+1 (the fetch's exit state).
+; RETURN CONTRACT: r-hi in A, r-lo in Y. X is the octant all the way
+;                 out now — the X = slot contract died with the memo.
 ;
 ; Probe: stage 0 compares KDYH against the A the fetch left — no load.
 ; A miss at stage k enters the store ladder AT k with the mismatched
@@ -833,58 +775,16 @@ ct_f_r2out:
 ; the delta again). (0,0) is unreachable — the classify routing
 ; excludes viewer-coincident corners.
 ; ============================================================================
-.macro CPM_ENTRY name, negx, negy, obase
-   .local cmiss0, cmiss1, cmiss2, cmiss3, czx, czy, cpm_conv
+.macro CORNER_ENTRY name, negx, negy, obase
+   .local czx, czy
 name:
-.ifndef CPM_MEMO
-; MEMO RETIRED (2026-09-04): no probe, no key bank, no psi store, no slot.
-; The shared-axis rows take their raw delta from cpm_sx/sy instead of the
-; key planes, which was the only thing making those planes load-bearing,
-; and the machinery cost more than the 15.5% hit rate bought:
-; walk 227,881 -> 226,660, suite 3,136,857 -> 3,112,708, heavy 431,250 ->
-; 426,874, all pixel-exact.  DOOM_ASMDEFS=CPM_MEMO=1 puts it back.
-; Enters the converter with the state the miss ladder converged on.
+; Corner entry, one sign class.  (The corner-phi MEMO that used to sit
+; here — 128-slot xor-hashed key/psi planes, probe + staggered key bank +
+; psi store — was retired 2026-09-04: measured walk -0.54%, suite -0.77%,
+; heavy -1.01% WITHOUT it, at a 15.5% hit rate.  The machinery cost more
+; than the hits bought.  b872178 has the numbers.)
    LDX #obase
    LDA pa_dx+1
-   JMP cpm_conv
-.endif
-   CMP CPM_KDYH,X                          ; stage 0: A = dy hi, no load  ;# ||         1.4
-   BNE cmiss0                                                             ;# |          0.8
-   LDA pa_dy                                                              ;# |          0.8
-   CMP CPM_KDYL,X
-   BNE cmiss1                                                             ;# |          0.7
-   LDA pa_dx                                                              ;#            0.4
-   CMP CPM_KDXL,X                                                         ;#            0.2
-   BNE cmiss2                                                             ;#            0.3
-   LDA pa_dx+1                                                            ;#            0.4
-   CMP CPM_KDXH,X                                                         ;# |          0.5
-   BNE cmiss3                                                             ;#            0.1
-   LDA CPM_PSIL,X                          ; HIT: serve psi; X = slot     ;#            0.2
-   STA pa_res                              ; rides through untouched      ;#            0.4
-   LDA CPM_PSIH,X                                                         ;# |          0.5
-   STA pa_res+1                                                           ;#            0.4
-   JMP cp_havepsi_hit                      ; C=1 PROVEN: all four probe   ;#            0.4
-                                        ; CMPs matched (equality sets C),
-                                        ; the serve preserves it — skip
-                                        ; the SEC (carry-flow audit
-                                        ; 2026-07-22)
-cmiss0:
-   STA CPM_KDYH,X                          ; staggered key bank: enter at ;#            0.4
-   LDA pa_dy                               ; the missed stage, store the  ;#            0.0
-cmiss1:
-   STA CPM_KDYL,X                          ; byte in A, load-store the    ;# |          1.0
-   LDA pa_dx                               ; rest; matched bytes are      ;# |          0.6
-cmiss2:
-   STA CPM_KDXL,X                          ; already in the planes        ;# |          1.0
-   LDA pa_dx+1                                                            ;# |          0.6
-cmiss3:
-   STA CPM_KDXH,X                          ; the validity mark (made good ;# |          0.5
-                                           ; when the psi lands; single-
-                                           ; threaded, no early outs)
-   STX zp_cpm_slot                         ; slot to zp on the MISS path  ;#            0.3
-                                           ; only — X becomes the octant
-   LDX #obase                                                             ;# |          0.4
-cpm_conv:
    ORA pa_dx                               ; A = pa_dx+1 (converged): the ;# |          0.6
    BEQ czx                                 ; x zero-out costs no load     ;#            0.4
 .if negx
@@ -925,10 +825,10 @@ czy:
 SEG_HIGHX
 angx_head:
 .endif
-CPM_ENTRY corner_phi_nn, 1, 1, 6                                          ;# ||||       3.6
-CPM_ENTRY corner_phi_pn, 0, 1, 2                                          ;# |          1.2
-CPM_ENTRY corner_phi_np, 1, 0, 4                                          ;# |          0.6
-CPM_ENTRY corner_phi_pp, 0, 0, 0                                          ;# |          0.5
+CORNER_ENTRY corner_phi_nn, 1, 1, 6                                          ;# ||||       3.6
+CORNER_ENTRY corner_phi_pn, 0, 1, 2                                          ;# |          1.2
+CORNER_ENTRY corner_phi_np, 1, 0, 4                                          ;# |          0.6
+CORNER_ENTRY corner_phi_pp, 0, 0, 0                                          ;# |          0.5
 
 ; ============================================================================
 ; Width arms — the 16-bit reductions, placed ABOVE lf_ns so its
@@ -1129,17 +1029,9 @@ ns_khave:
    ADC pa_base_hi,X                        ; psi hi = base + ta hi        ;# |          0.4
    STA pa_res+1                                                           ;#            0.3
 mask_done:
-; psi memo store; entries persist forever (psi is a pure function of
-; the key). The LDX does double duty: store index AND the X = slot
-; return contract (the octant chain repurposed X) — both mask_done
-; and khave_sub's exit depend on it, so list its duties before
-; touching it.
-.ifdef CPM_MEMO                            ; retired: no slot, no store —
-   LDX zp_cpm_slot                         ; X = slot's ONLY consumer was ;# |          0.7
-   STA CPM_PSIH,X                          ; the shared-row reload        ;# |          1.1
-   LDA pa_res                                                             ;# |          0.7
-   STA CPM_PSIL,X                                                         ;# |          1.1
-.endif
+; (the psi memo store lived here until 2026-09-04.  With it went the
+; X = slot return contract: X now stays the octant all the way out, and
+; nothing downstream reads it.)
 cp_havepsi:
 ; r = (afn - psi) & 4095, pure u12 (consumers do mod-4096 arithmetic
 ; on the hi nibble directly). pa_res stays stored: the psi-hi SBC and
@@ -1231,13 +1123,12 @@ SEG_CODE
 ; (rc_wipe, dbox_check, its probe arms and dst_drop -- the forward-
 ;  coherence cache and its refresh wheel -- deleted 2026-09-04.)
 end:
-; Corner scratch (2026-09-04): the four bytes that replace the key planes' second
-; job — the shared-axis rows' raw delta across c1's in-place negation.
-; Declared unconditionally so the symbol exists either way; it costs four
-; bytes of RWC in the default build and nothing reads them there.
+; Corner scratch (2026-09-04): the four bytes that replaced the memo key
+; planes' second job — holding a shared-axis row's raw delta across c1's
+; in-place negation.  This is all the storage the corner pipeline needs.
 .segment "RWC"
-cpm_sx: .byte 0, 0
-cpm_sy: .byte 0, 0
+corner_sx: .byte 0, 0
+corner_sy: .byte 0, 0
 SEG_CODE
 
 .if BANKED

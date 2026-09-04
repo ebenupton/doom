@@ -896,7 +896,7 @@ wo_rts:
 ;   in : A = PAL fields elapsed (clamped PM_FCAP), X = input (b0 fwd,
 ;        b1 back, b2/b3 turn), DV_ANGIDX / DV_PXF.. (24-bit 8.8
 ;        positions), pm_vz.
-;   out: position + pm_vz updated, D_FWD written, PM_TURNREM carried.
+;   out: position + pm_vz updated, PM_TURNREM carried.
 ;
 ; (This block described the MOMENTUM model until 2026-08-29 — thrust,
 ;  the +-960 clamp, STOPSPEED, *232>>8 friction, and an "out" naming
@@ -934,8 +934,8 @@ pm_in     = PM_SCRATCH+$5E              ; input bits
 pm_thr    = PM_SCRATCH+$5F              ; thrust-active flag
 pm_nx     = PM_SCRATCH+$60              ; candidate 24-bit x
 pm_ny     = PM_SCRATCH+$63              ;  (nx..ny: commit copy run)
-pm_tdx    = PM_SCRATCH+$66              ; intended displacement (D_FWD)
-pm_tdy    = PM_SCRATCH+$68
+; ($0F66-$0F69 FREE 2026-09-04: pm_tdx/pm_tdy staged the intended move
+;  for the deleted D_FWD flag)
 pm_um     = PM_SCRATCH+$6A              ; mul |v| u16
 pm_ures   = PM_SCRATCH+$6C              ; mul 24-bit accumulator
 pm_uadd   = PM_SCRATCH+$6F              ; mul 24-bit shifting addend
@@ -961,10 +961,7 @@ pmc_fld   = PM_SCRATCH+$8E              ;  fields / key bits ($FF = cold:
 pmc_in    = PM_SCRATCH+$8F              ;  fields is 1..10, never $FF)
 pmc_fd    = PM_SCRATCH+$90              ; cached fdx,fdy (4 B)
 pmc_hit   = PM_SCRATCH+$94              ; this frame served from cache
-pmc_dfwd  = PM_SCRATCH+$95              ; cached D_FWD (a pure key
-                                        ;  function); $FF = not computed
-                                        ;  under this key (a blocked
-                                        ;  commit skips the compute)
+; ($0F95 FREE 2026-09-04: pmc_dfwd cached the deleted D_FWD flag)
 pm_by8lo4 = PM_SCRATCH+$96              ; box ymin 256-cell << 4 and
 pm_by8hi1 = PM_SCRATCH+$97              ;  ymax 256-cell + 1: the packed-
                                         ;  nibble port prescreen operands
@@ -1035,8 +1032,6 @@ pf_fok:                                 ;  coefficient table's last row)
    TAX
    BNE pf_go
 pf_none:
-   LDA #0
-   STA D_FWD
    RTS
 pf_go:
 ; Rotate FIRST, so the walk below uses the angle we end up facing (the
@@ -1080,7 +1075,6 @@ pfc_miss:
    LDA #0
    STA pmc_hit
    LDA #$FF
-   STA pmc_dfwd
    LDA DV_ANGIDX
    STA pmc_ang
    STX pmc_fld
@@ -1120,9 +1114,7 @@ pf_thr:
    BCC pf_thr
    JMP pf_move
 pf_nomove:
-   LDA #0                               ; not walking: nothing to commit,
-   STA D_FWD                            ;  and the cache cannot serve
-   RTS
+   RTS                                  ; not walking: nothing to commit
 ; --- apply the displacement in DOOM-halved chunks ---------------------
 pf_move:
    LDA pm_fdx
@@ -1133,12 +1125,6 @@ pf_move:
    JMP pf_none
 pf_mv_go:
    ASL pm_moved                         ; 1 -> 2: moved with a valid origin
-   LDX #3
-pf_ctd:
-   LDA pm_fdx,X                         ; intended move, for D_FWD
-   STA pm_tdx,X
-   DEX
-   BPL pf_ctd
    LDA #1
    STA pm_okf
    LDA #0
@@ -1147,7 +1133,7 @@ pf_ctd:
 pf_chunk:
    LDA pm_chunks
    BNE pf_c_go
-   JMP pf_dfwd
+   RTS
 pf_c_go:
    JSR pmf_cand                         ; candidate + raws
    JSR pmove_try
@@ -1226,7 +1212,7 @@ pf_f_ok:
    JSR pmf_commit
    JMP pf_chunk
 pf_f_stop:                              ; boxed in: nothing commits
-   JMP pf_dfwd
+   RTS
 
 ; --- rotation ---------------------------------------------------------
 ; SEG_PMOVE, not PMB1: main RAM is always mapped, so bank-B code reads
@@ -1299,66 +1285,10 @@ PF_TURN_H:
    .byte >90, >179, >268, >358, >448, >537, >626, >716, >806, >895
 .endscope
 
-; ============================================================================
-; D_FWD — clean commit AND the move points FORWARD along the view unit.
-; The cross-product exactness test died 2026-09-03: it dated from the
-; momentum model (friction drift could deflect the move off the ray).
-; With momentum retired the intended move IS sc16(unit) by construction;
-; the only deviation is the >>8 truncation, <= 1 count per axis, at most
-; 0.37 deg = 0.82 screen columns at a 1-field step — inside dbox_check's
-; +-4-column focus-of-expansion guard band.  The old test rejected the
-; residue on 80% of (heading, fields) cases, leaving the forward cache
-; dormant off the cardinal/diagonal headings.
-; ============================================================================
-SEG_PMB2
-.scope
-::pf_dfwd:
-   LDA #0
-   STA D_FWD
-   LDA pm_okf
-   BNE df_go
-   RTS
-df_go:
-   LDA pmc_hit                          ; cache-hit frame: D_FWD is the
-   BEQ df_compute                       ; same pure function of the key
-   LDA pmc_dfwd                         ; as the displacement — IF a
-   BMI df_compute                       ; compute ran under this key
-   STA D_FWD                            ; ($FF = it did not)
-   RTS
-df_compute:
-   LDA DV_ANGIDX
-   JSR pmf_unit
-df_dir:
-; forward iff the dominant nonzero component points with the unit
-   LDA pm_tdx
-   ORA pm_tdx+1
-   BEQ df_y
-   LDA pm_tdx+1
-   ASL A
-   LDA #0
-   ROL A                                ; A = sign(tdx)
-   CMP pm_wu+1
-   BNE df_out
-   BEQ df_yes
-df_y:
-   LDA pm_tdy+1
-   ASL A
-   LDA #0
-   ROL A
-   CMP pm_wu+3
-   BNE df_out
-df_yes:
-   LDA #1
-   STA D_FWD
-df_out:
-; store-through: on a clean commit the value just derived is the pure
-; key function the hit path serves (D_FWD stays 0-initialized on the
-; not-clean path, which never reaches here)
-   LDA D_FWD
-   STA pmc_dfwd
-   RTS
-.endscope
-
+; (pf_dfwd — the D_FWD 'move points forward along the view unit' flag —
+;  was deleted 2026-09-04 with the forward-coherence bbox cache that was
+;  its only reader.  With it went pm_tdx/pm_tdy, the pmc_dfwd key cache
+;  and the pmf_unit call it forced on every walking frame.)
 ; ============================================================================
 ; pmf_split — fd -> kk (halvings until both axes <= 480), chunks = 1<<k,
 ; cd = fd asr k, rem = cd << k (= cd*chunks: the slide's remaining)

@@ -145,7 +145,6 @@
 .globalzp pa_res
 .globalzp bca_afn
 .globalzp zp_bf_dir
-.globalzp zp_cpm_slot
 .globalzp zp_seg_flags
 .globalzp pa_ptr
 .globalzp zp_ys_done
@@ -388,7 +387,8 @@ pa_res:                     .res 1 ; [ang]; u16 out (fineangle) ; w=2
 bca_afn:                    .res 1 ; [ang]; a_fine (s16) -- ZP (freed from pa_adx); hot in corner_phi ; w=2
    .res 1                               ; FREE $3C-$3C
 zp_bf_dir:                  .res 1 ; [bsp]; diagonal back-face DIR-table index;
-zp_cpm_slot:                .res 1 ; [ang]; memo hash slot, probe -> store
+   .res 1                               ; FREE (zp_cpm_slot, the corner
+                                        ; memo's hash slot, retired 2026-09-04)
 zp_seg_flags:               .res 1 ; [bsp]; u8
 pa_ptr:                     .res 1 ; [ang]; 16-bit table pointer ; w=2
    .res 1                               ; FREE $41-$41

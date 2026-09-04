@@ -79,10 +79,6 @@ ORG &7800
     LDX T_ZP_CLRP+1
     CPX #&1A
     BNE pz1
-\ (The CPM KDXH $80-prefill that lived here is GONE 2026-09-02: flat CPM
-\  sits at $BC00-$BEFF now, INSIDE the DATA span, and the image builder
-\  ships the $80 validity plane in the file — the resident init also
-\  re-fills it after the loads, which is the copy that matters on HW.)
     LDX #0                      \ *LOAD every engine/data file: strings
 .ldloop                         \ are CR-terminated, list ends with 0
     LDA loads,X
@@ -258,17 +254,12 @@ SKIPTO &F610
     STA &00,X
     INX
     BNE zpclr
-\ ---- engine state init (walk_drv's rcinit block, flat addresses) ----
-                                \ (A = 0, X = 0 still — rides into rcinit)
-.rcinit
-    STA T_RCACHE_STATE,X
-    INX
-    CPX #T_RCACHE_LEN
-    BNE rcinit
-    LDX #0
+\ ---- engine state init (flat addresses) ----
+\ (the RCACHE_STATE zeroing loop died 2026-09-04 with the extent cache)
+                                \ (A = 0, X = 0 still — rides into vxinit)
 .vxinit
-    STA T_VXCACHE_STATE,X       \ whole bitmap page (VALID+VDONE+
-    INX                         \ VXCACHE_VALID+RCACHE_COMPUTED)
+    STA T_VXCACHE_STATE,X       \ whole bitmap page (VRCACHE_VALID +
+    INX                         \ VDONE + VXCACHE_VALID)
     BNE vxinit
     LDA #1                      \ VXCACHE ON -- by construction (Eben
     STA T_VXCACHE_ENABLE        \ 2026-09-02): the flat planes own the
@@ -278,9 +269,8 @@ SKIPTO &F610
                                 \ animated sectors (doors/lifts): engine
     STA T_ANIM_ENABLE           \ anim, no driver glue needed on the
     JSR T_ANIM_INIT             \ copro (flat build: no banking)
-\ (The CPM KDXH $80-refill is GONE 2026-09-02: the DATA file carries the
-\  $80 validity plane at $BC80 and the loads deliver it before init runs
-\  -- the bytes went to the two-byte-mask O handling.)
+\ (the corner-phi memo, whose $80 validity plane used to be seeded here,
+\  was retired 2026-09-04)
 \ (the frame-class vector seeding died 2026-09-04 with the extent cache)
 \ ---- spawn state (constants from tube_syms.inc) ----
 \ Spawn lands in pm_frame's DRIVER-VARIABLE CONTRACT (DV_*): the engine

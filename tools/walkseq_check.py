@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""Forward-coherence bbox cache (D cache) lockstep validation.
+"""Multi-frame walking lockstep validation.
 
-Drives the 6502 engine through multi-frame walking sequences with
-D_ENABLE=1 and the driver's D_FWD flag asserted on forward frames, and
-byte-compares every frame's framebuffer against the pixel-exact Python
-reference rendered fresh (the D cache changes traversal, provably never
-pixels). Sequences include forward runs, a mid-run rotation (wipe), a
-backward step (wipe), and a stationary tail. Also asserts the cache
-actually engages (fresh-frame cycles drop once warm).
+Drives the 6502 engine through walking sequences — forward runs, a
+mid-run rotation, a backward step, a stationary tail — and byte-compares
+every frame's framebuffer against the pixel-exact Python reference
+rendered fresh.  Written for the forward-coherence bbox cache (deleted
+2026-09-04); the sequences are the coverage worth keeping, because any
+state the engine carries frame to frame has to survive them.
 """
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
@@ -35,12 +34,10 @@ def main():
     from bsp_render_6502 import disable_objects
     disable_objects(mem)                    # pyref has no billboards (the
                                             # documented OBJ_DRAW gap)
-    D_ENABLE, D_FWD = sym('D_ENABLE', banked=1), sym('D_FWD', banked=1)
-    mem[D_ENABLE] = 1
 
     # sequence: (dx-steps, dy-steps are along facing), move kind per frame
-    # 'f' = forward step (D_FWD=1), 's' = stationary, 'r' = rotate +4,
-    # 'b' = backward step (D_FWD=0)
+    # 'f' = forward step, 's' = stationary, 'r' = rotate +4,
+    # 'b' = backward step
     SEQS = [
         (2345, -3123, 132, 'ffffffffssfffrfffbff'),
         (1056, -3616, 65,  'ffffffffffffffff'),
@@ -58,7 +55,6 @@ def main():
                 px, py = px + v.x * s, py + v.y * s
             elif mv == 'r':
                 ab = (ab + 4) & 0xFF
-            mem[D_FWD] = 1 if mv == 'f' else 0
             cyc = eng.render_frame(px, py, ab, dw.player_floor(px, py))
             if k == 1: cyc_first = cyc
             if k == 8: cyc_warm = cyc
