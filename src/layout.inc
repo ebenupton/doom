@@ -5,8 +5,8 @@
 ; values on import — drift fails loud there, never silently here.
 ; ============================================================================
 LAY_N_SEGS   = 644
-LAY_N_NODES   = 195
-LAY_ROOT   = 194                      ; n_nodes - 1
+LAY_N_NODES   = 194
+LAY_ROOT   = 193                      ; n_nodes - 1
 LAY_OFF_VERTS   = $0B00
 LAY_OFF_SS   = $0900
 LAY_OFF_SEG_HDR   = $1100
