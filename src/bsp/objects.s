@@ -125,7 +125,10 @@ obj_gtab:                                  ; projected-height growth in
 .pushseg
 .segment "VPTAB"
 obj_lodh:
-   .byte 33, $FF, $FF, 7, 24, 12, 24       ; potion SINGLE-TIER + helmet/
+   .byte 33, $FF, $FF, 7, 24, 12, 24       ; potion SINGLE-TIER (the octagon
+                                           ; far tier is BUILT but parked: no
+                                           ; art space, see obj_potion_xy) +
+                                           ; helmet/
                                            ; vest re-tiered 2026-09-02;
                                            ; helmet 24 -> 7 (2026-09-04,
                                            ; Eben: the hoplite's switch
@@ -135,7 +138,8 @@ obj_lodh:
 obj_tpl_pg2:                               ; art window high byte, lo/hi tier
    .byte >OBJ_ART,        >(OBJ_ART+$200)  ; hex / OCT
    .byte >OBJ_ART,        >OBJ_ART         ; lamp
-   .byte >(OBJ_ART+$200), >(OBJ_ART+$200)  ; potion: the dodecagon, ONLY
+   .byte >(OBJ_ART+$200), >(OBJ_ART+$200)  ; potion: 12-gon at both tiers until
+                                           ; the octagon template has a home
    .byte >(OBJ_ART+$200), >OBJ_ART         ; helmet: L1 far / hoplite near
    .byte >(OBJ_ART+$100), >(OBJ_ART+$200)  ; box-stim / trapezoid+cross
    .byte >(OBJ_ART+$100), >(OBJ_ART+$200)  ; box-medikit
@@ -1331,10 +1335,29 @@ obj_box_l0:
 ; four builders there, and these two run under the prologue's PAGE BANK_C
 ; anyway.  umul8 is in the always-mapped bottom.
 SEG_BANKC
+obj_pmid = obj_pb+4                        ; the potion's tier-selected mid
+                                           ; magnitude (a2 or c).  obj_pb+4 is
+                                           ; the block's loop/spare byte and the
+                                           ; potion builder has no loop.
 obj_potion_xy:
+; TWO TIERS (2026-09-05): the SAME ladder builds both.  Near = the
+; dodecagon (mid magnitude a2 = 0.7321); far = an OCTAGON of the SAME
+; radius and the SAME neck, which is the cut-square construction with
+; c = sqrt(2)-1 = 0.4142 in the mid slot.  The y ladder then writes
+; cy -+ c into the a3 slots as well, so the far template's unused
+; entries hold in-band duplicates instead of an earlier object's stale
+; bytes -- that staleness was the (585,-3437,244) crash of 2026-09-03.
+   LDA obj_lod
+   BNE opt_mid                             ; 1 = near: the dodecagon
+   LDA #106                                ; c = 0.4142 (octagon)
+   BNE opt_have_mid                        ; (always)
+opt_mid:
+   LDA #187                                ; a2 = 0.7321 (dodecagon)
+opt_have_mid:
+   STA obj_pmid
    LDA obj_a
    STA zp_mul_b
-   LDA #187                                ; q = a2 = 0.7321
+   LDA obj_pmid
    JSR umul8
    LDA zp_prod_l
    CMP #128
@@ -1347,27 +1370,29 @@ obj_potion_xy:
    CMP #128
    LDA zp_prod_h
    ADC #0
-   STA obj_pb+2                            ; a3*a (ditto)
-   LDA #8                                  ; cx -+ qa -> obj_X 1/4
+   STA obj_pb+2                            ; a3*a (the NECK, both tiers)
+   LDA #8                                  ; cx -+ mid -> obj_X 1/4
    STA obj_px
    LDY #2
-   LDA #187
+   LDA obj_pmid
    JSR obj_mirror
    LDA #6                                  ; the stem sides -> obj_X 2/3:
    STA obj_px                              ; a3 (the dodecagon vertex snap
    LDY #4                                  ; -- exact joins)
    LDA #69
    JSR obj_mirror
-   JMP opt_near
-; SINGLE-TIER (2026-09-03): obj_lodh pins the potion at tier 0 and BOTH
-; obj_tpl entries are POTL0, but this builder still forked on obj_lod --
-; tier 0 built the RETIRED far ladder (y offs 0-8, old semantics) under
-; the near template, leaving offs 10/12 STALE.  A stale off-12 y from an
-; earlier object made a reversed out-of-band vertical, and vplot's
-; armed-RTS ran off the unroll: the (585,-3437,244) crash.  The builder
-; is now unconditionally the POTL0 (dodecagon) ladder; the far arm died.
+   LDA obj_lod                             ; far: the y ladder's a3 slots
+   BNE opt_near                            ; become c duplicates (see above)
+   LDA obj_pb
+   STA obj_pb+2
 opt_near:
-; the dodecagon's y ladder: cy -+ {a, qa, a3a} with cy = syb - a, all
+; ONE y ladder for BOTH tiers.  (History: the 2026-09-03 crash came from a
+; far arm that wrote only y offs 0-8 under the near template, leaving 10/12
+; STALE from an earlier object -- a reversed out-of-band vertical ran
+; vplot's armed-RTS off the unroll at (585,-3437,244).  The ladder below
+; writes every slot every time, which is why the octagon tier reuses it.)
+; cy -+ {a, mid, mid-or-a3a} with cy = syb - a, all expressed as syb minus
+; a byte (the stem sides were mirrored above): cy -+ {a, qa, a3a} with cy = syb - a, all
 ; expressed as syb minus a byte (the stem sides were mirrored above)
    LDY #12                                 ; syt -> y0, syb -> y6 (off 12)
    JSR obj_ends
