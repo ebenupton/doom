@@ -35,7 +35,6 @@ pyl    = DV_PYL
 pyh    = DV_PYH
 hud_en   = DV_HUD_EN        ; debug HUD on/off (H key toggles)
 hud_prev = DV_HUD_PREV        ; H-key state last frame (press-edge debounce)
-; (D_ENABLE/D_FWD from the ABI include)        ; forward-coherence bbox cache master switch (bbox.s)
 ; ---        ; per-frame flag: this frame's move was forward-only
 ; (vsync journal RETIRED 2026-08-09 — the flip timing is validated and the
 ; page was reclaimed for the quarter-square tables; the class logic below
@@ -314,8 +313,8 @@ vxinit:
     JSR anim_glue_init
     ; --- init state ---
     LDA #1
-    STA D_ENABLE   ; forward-coherence bbox cache
-    ; (D_FWD needs no init: read_input clears it every frame)
+    ; (the forward-coherence bbox cache went 2026-09-04: no enable, no
+    ;  D_FWD -- read_input no longer computes one)
     LDA #$6C
     STA backhi
     ; --- spawn pose LAST, with the clock seed, and for the same reason:

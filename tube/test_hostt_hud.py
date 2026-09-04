@@ -53,12 +53,8 @@ PAYLOAD = [0x3D, 0xD2, 0xE6, 0x00,
            0xFF, 0xE3, 0x1D, 0x00,
            0x00, 0x5C, 0x03, 0x00]      # 9 = TRIPWIRE latch, 10 = PAL fields,
                                         # 11 = bbox-cache class (raw zp_bv_entry lo)
-EXPECT = "X=FFE6.D2 Y=001D.E3 R=F4 F=03 D"
-# the class byte is the packet's last: zp_bv_entry's raw low byte, decoded
-# against the class entries the generated syms file carries
-_syms = open(os.path.join(ROOT, 'tube', 'tube_syms.inc')).read()
-_lo = lambda n: int(re.search(rf'^{n} = &([0-9A-F]+)', _syms, re.M).group(1), 16) & 0xFF
-CLASS_CASES = ((0x00, 'P'), (_lo('T_BBOX_CHECK_ANGLE'), 'R'), (_lo('T_DBOX_CHECK'), 'D'))
+EXPECT = "X=FFE6.D2 Y=001D.E3 R=F4 F=03"
+# (the class byte and its letter died 2026-09-04 with the extent cache)
 
 
 # Every character gets eight bytes of its own code, so a drawn cell
@@ -85,7 +81,7 @@ def decode(mem, base_page, n):
     return out
 
 
-def run_case(code, sym, font_base, cls=2, expect=EXPECT):
+def run_case(code, sym, font_base, cls=0, expect=EXPECT):
     mem = ObservableMemory()
     mem[0x1900:0x1900 + len(code)] = list(code)
     install_font(mem, font_base)
@@ -153,11 +149,10 @@ def main():
     # by the Master case. tools/test_hud_font.py gates the probe that
     # chooses between them.
     for name, base in (('Model B  $C000', 0xC000), ('Master   $F900', 0xF900)):
-        for cls, letter in CLASS_CASES:
-            print(f'-- font at {name}, class {letter} --')
-            ok = run_case(code, sym, base, cls, EXPECT[:-1] + letter)
-            print(f'   {"ok" if ok else "FAILED"}')
-            allok = allok and ok
+        print(f'-- font at {name} --')
+        ok = run_case(code, sym, base)
+        print(f'   {"ok" if ok else "FAILED"}')
+        allok = allok and ok
     print('HOSTT-HUD: ' + ('PASS' if allok else 'FAIL'))
     return 0 if allok else 1
 

@@ -67,12 +67,13 @@
 ; bank changes, so deleting it is worth ~118 cycles/frame.  The two
 ; labels are now aliases; bbox_visible_l2 keeps its name because the
 ; L2-proven arcs document why they may skip a page.
-bbox_visible:
-::bbox_visible_l2:                   ; entry for L2-PROVEN callers (the
-                                        ; walk's near-invisible -> far-check
-                                        ; arc: bca exits L2 and PLA/stores/
-                                        ; SPAN_IS_NOT_FULL touch no banked
-                                        ; data)
-   JMP (zp_bv_entry)                       ; exits return to OUR caller
+.import box_classify
+; ALIASES, not a stub (2026-09-04): with one class left there is nothing
+; to dispatch, so the JMP died too -- every caller now assembles a direct
+; JSR to box_classify.  The names live on because the tools and the
+; L2-proven arcs document their contracts.
+bbox_visible = box_classify
+bbox_visible_l2 = box_classify
+.export bbox_visible_l2
 
 SEG_CODE                         ; restore for subsequently-included parts

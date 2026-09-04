@@ -112,13 +112,7 @@ def main():
                 # the packet 4-tuple aligned for the host's skip-ahead
                 # parser AND stops a run of FFs in the position bytes
                 # faking the ISR's 4-consecutive-FF end-of-frame marker.
-                # (The LAST tuple ends in the bbox-cache class byte since
-                #  2026-09-04: zp_bv_entry's raw low byte, asserted < FE at
-                #  syms generation so it can fake neither marker.)
-                if state['hudleft'] == 0:
-                    assert c[3] < 0xFE, f"HUD class byte could fake a marker: {c}"
-                else:
-                    assert c[3] == 0, f"HUD payload tuple not 00-padded: {c}"
+                assert c[3] == 0, f"HUD payload tuple not 00-padded: {c}"
             elif c == [0xFF] * 4:
                 state['eofs'] += 1
                 state['frame'] += 1
@@ -233,10 +227,9 @@ def main():
                 base[T['FIELDS']] if 'FIELDS' in T else None, None]
         if want[10] is None:                       # `fields` is a driver var,
             want[10] = h[10]                       # not an exported symbol
-        # byte 11 = zp_bv_entry's raw low byte (the HUD class letter,
-        # 2026-09-04): it must name one of the three class entries
-        classes = {base_sym & 0xFF for base_sym in (T['DBOX_CHECK'], T['BBOX_CHECK_ANGLE'], T['BOX_CLASSIFY'])}
-        want[11] = h[11] if h[11] in classes else -1
+        # byte 11 is a 0 PAD again (2026-09-04): the extent cache is gone,
+        # so the copro has no frame class to report.
+        want[11] = 0
 
         hud_ok = (h == want)
         if not hud_ok:

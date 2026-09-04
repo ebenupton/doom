@@ -2,18 +2,16 @@
 ; ============================================================================
 ; Debug HUD — position and rotation on the top character row of the display.
 ;
-; Renders "X=hhhh.hh Y=hhhh.hh R=hh F=hh C" (map-relative prescaled
+; Renders "X=hhhh.hh Y=hhhh.hh R=hh F=hh" (map-relative prescaled
 ; position, s16 integer + 8-bit fraction of the driver's 8.8 fixed point,
-; the view angle byte, the PAL fields the last frame took, and the bbox-
-; cache class the frame ran in: P = pristine (moved, cache off), R =
-; rotation cache (stationary or turning), D = forward-coherence cache;
-; it is zp_bv_entry's low byte, the vectored bbox_visible entry that
-; bca_frame chose for the frame — 2026-09-03) into the
+; the view angle byte, and the PAL fields the last frame took) into the
 ; BACK buffer's first character row, after the
 ; frame render and before the flip, using the OS ROM font.  The fraction
 ; matters for exact position capture: the engine consumes the full 8.8,
 ; so an integer-only reading is up to 1 prescaled unit (8 world units)
 ; away from the true viewpoint.
+; (The trailing " C" cache-class letter died 2026-09-04 with the extent
+;  cache -- one class left, nothing to report.)
 ;
 ; Mode 4 makes this cheap: a character cell on row 0 is 8 CONSECUTIVE
 ; bytes at FB + col*8, and an OS glyph is 8 consecutive bytes at
@@ -56,7 +54,6 @@
 
 .if ::BANKED
 
-.import dbox_check, bbox_check_angle    ; ang/bca.s: the class entries
 
 ; zp scratch — frame-scoped: these sit inside the VX vertex structs
 ; ($E2-$FF), which are per-seg working state, dead between the frame's
@@ -159,22 +156,9 @@ hd_go:
    JSR hud_char
    LDA HUD_FIELDS
    JSR hud_hex
-; " C" — the frame's bbox-cache class, from the entry vector bca_frame
-; left in zp_bv_entry (the vectored bbox_visible; low bytes are asserted
-; distinct in bca.s): D = dbox_check, R = bbox_check_angle, else P.
-   LDA #' '
-   JSR hud_char
-   LDA zp_bv_entry
-   LDX #'D'
-   CMP #<dbox_check
-   BEQ hd_cls
-   LDX #'R'
-   CMP #<bbox_check_angle
-   BEQ hd_cls
-   LDX #'P'
-hd_cls:
-   TXA
-   JMP hud_char                            ; tail: its RTS is ours
+; (the " C" class letter died 2026-09-04 with the extent cache: one class
+;  left, nothing to report.  HUD_FIELDS above is the live frame cost.)
+   RTS
 .endscope
 
 ; --- hud_hex: A = byte -> two hex digit cells. Clobbers A,X,Y. ---

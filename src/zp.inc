@@ -180,7 +180,7 @@
 .globalzp zp_anim_p
 .globalzp zp_anim_w
 .globalzp zp_prev
-.globalzp zp_bv_entry
+.globalzp obj_n
 .globalzp zp_seg_end_x
 .global zp_seg_fh
 .global zp_seg_ch
@@ -433,10 +433,14 @@ zp_anim_p:                  .res 2 ; [bsp]; anim table cursor (2; was the
 zp_anim_w:                  .res 2 ; [bsp]; anim write pointer (2; was $ED/$EE)
 zp_prev:                    .res 1 ; [clip]; pool-walk prev (from $E2 — structs)
    .res 1                               ; FREE $62-$62
-zp_bv_entry:                .res 1 ; [ang] 2-byte entry vector: bbox_visible
-                                  ; is JMP (zp_bv_entry) -> bbox_check_angle
-                                  ; (standing: probe) or box_classify (moving:
-                                  ; pristine). Paired with zp_tail_vec; w=2
+obj_n:                      .res 1 ; ROTATED IN 2026-09-04 (zprotate): 30.9
+                                  ; accesses/frame.  This byte WAS
+                                  ; zp_bv_entry, the bbox_visible class
+                                  ; vector, freed when the extent cache
+                                  ; went; renamed IN PLACE (the $CC/$CD/$C8
+                                  ; hand-baked equates would collide if the
+                                  ; block shifted).  The stale text below
+                                  ; belonged to the vector's own note.
                                   ; (valid bits armed, probe+serve+store);
                                   ; nonzero = moving/unknown (pristine
                                   ; passthru, no probe, no stores). Written

@@ -47,7 +47,7 @@ SEG_WORK
 obj_i:       .res 1
 obj_yb_l:    .res 1
 obj_yb_h:    .res 1
-obj_h:       .res 1
+obj_h:       .res 1                        ; (zp had room for obj_n only)
 obj_a:       .res 1
 obj_a2:      .res 1
 obj_a3:      .res 1
@@ -69,7 +69,6 @@ obj_Y:       .res 52                       ; 26 x s16; MUST be obj_X + 12.
 obj_pb:      .res 5                       ;   product; magnitudes; loop
 obj_pn:      .res 1                       ; obj_mirror's -side offset latch
 obj_lod:     .res 1                       ; 0 = far tier, 1 = near tier
-obj_n:       .res 1
 obj_left:    .res 1
 obj_k:       .res 1
 obj_best:    .res 1

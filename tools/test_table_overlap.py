@@ -33,7 +33,7 @@ import symmap, colmap, anim_sectors as an, doom_wireframe as dw
 # node-indexed: the store is `STA <plane>,Y` with Y = node id, so each
 # plane is exactly n_nodes bytes
 # The rcache psi planes (length = node count) ...
-PLANES = ('RC_P1L_0', 'RC_P1L_1', 'RC_P2L_0', 'RC_P2L_1', 'RC_PH_0', 'RC_PH_1')
+PLANES = ()      # the rcache psi planes went with the extent cache (2026-09-04)
 # ...and every OTHER relocatable cache block, with its real length.  These
 # were missing, and the gate cheerfully passed a rehome that put four VXCACHE
 # planes inside the flat seg-header table (ROM_SEG_HDR_C $8600 + 5,884 B).
@@ -41,7 +41,7 @@ PLANES = ('RC_P1L_0', 'RC_P1L_1', 'RC_P2L_0', 'RC_P2L_1', 'RC_PH_0', 'RC_PH_1')
 # about is a cache that can land anywhere.  2026-08-30.
 SIZED_PLANES = (('VXCACHE_XLO', 0x200), ('VXCACHE_XHI', 0x200),
                 ('VXCACHE_YLO', 0x200), ('VXCACHE_YHI', 0x200),
-                ('VRCACHE_BASE', 0x200), ('RCACHE_STATE', 138),
+                ('VRCACHE_BASE', 0x200),
                 ('VYCACHE_R_S', 0x100), ('VYCACHE_KEY', 0x100),
                 ('VYCACHE_L', 0x100), ('VYCACHE_H', 0x100))
 
@@ -175,8 +175,11 @@ def main():
         if not banked:
             planes += [(p, t[p], L) for p, L in SIZED_PLANES if p in t]
         if not planes:
-            print(f'  {tag}: no psi planes in the map -- check the names')
-            ok = False
+            # LEGITIMATE since 2026-09-04: the rcache psi planes went with
+            # the bbox extent cache, so the banked build has none.  Only a
+            # MISSING expected plane is a failure, and PLANES is now empty
+            # by construction -- see its definition above.
+            print(f'  {tag}: no psi planes (the extent cache is gone) -- skipped')
             continue
         hits = []
         for pn, pa, pl in planes:

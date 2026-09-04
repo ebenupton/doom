@@ -278,20 +278,10 @@ SKIPTO &F610
                                 \ animated sectors (doors/lifts): engine
     STA T_ANIM_ENABLE           \ anim, no driver glue needed on the
     JSR T_ANIM_INIT             \ copro (flat build: no banking)
-    LDA #1                      \ forward-coherence bbox cache (dbox):
-    STA T_D_ENABLE              \ the engine classifies frames itself,
-                                \ the driver just asserts D_FWD below
 \ (The CPM KDXH $80-refill is GONE 2026-09-02: the DATA file carries the
 \  $80 validity plane at $BC80 and the loads deliver it before init runs
 \  -- the bytes went to the two-byte-mask O handling.)
-    LDA #LO(T_TAIL_POSTRC)      \ frame-class vectors: moving targets
-    STA T_ZP_TAIL_VEC
-    LDA #HI(T_TAIL_POSTRC)
-    STA T_ZP_TAIL_VEC+1
-    LDA #LO(T_BOX_CLASSIFY)
-    STA T_ZP_BV_ENTRY
-    LDA #HI(T_BOX_CLASSIFY)
-    STA T_ZP_BV_ENTRY+1
+\ (the frame-class vector seeding died 2026-09-04 with the extent cache)
 \ ---- spawn state (constants from tube_syms.inc) ----
 \ Spawn lands in pm_frame's DRIVER-VARIABLE CONTRACT (DV_*): the engine
 \ reads AND writes those, so the driver no longer keeps its own copy of
@@ -513,15 +503,10 @@ ELSE
 ENDIF
     JSR esend1
     LDA fields      : JSR esend1    \ PAL fields this frame -> the HUD's F=
-\ The tuple's last byte carries the bbox-cache CLASS for the HUD's C
-\ letter (2026-09-04): the RAW low byte of the vectored bbox_visible
-\ entry bca_frame chose; the HOST decodes it against the exported class
-\ entries (dbox_check = D, bbox_check_angle = R, else P) exactly as
-\ src/hud.s does, so this costs the resident nothing.  build_tube_game
-\ asserts no class entry's low byte is FE/FF, which keeps the two jobs
-\ the 00 pad did: the packet stays 4-tuple aligned and no FF run can
-\ form through it.
-    LDA T_ZP_BV_ENTRY : JSR esend1
+\ The tuple's last byte is PAD again (2026-09-04): the bbox extent cache
+\ is gone, so there is no frame class to report.  A zero keeps the packet
+\ 4-tuple aligned and cannot extend an FF run.
+    LDA #0          : JSR esend1
     LDX #4                      \ end of frame: FF FF FF FF
 .eof
     LDA #&FF

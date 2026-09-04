@@ -581,18 +581,6 @@ ORG &1900
     LDA #'=' : JSR hudchar      \ the copro's own frame-rate readout
     LDA hudb+10
     JSR hudhex
-    LDA #' ' : JSR hudchar      \ C = the bbox-cache class the frame ran
-    LDA hudb+11                 \ in: the copro's zp_bv_entry low byte,
-    LDX #'D'                    \ decoded as src/hud.s does -- D forward
-    CMP #LO(T_DBOX_CHECK)       \ cache / R rotation cache / else P
-    BEQ hudcl                   \ pristine (the two entries come from the
-    LDX #'R'                    \ generated tube_syms.inc)
-    CMP #LO(T_BBOX_CHECK_ANGLE)
-    BEQ hudcl
-    LDX #'P'
-.hudcl
-    TXA
-    JSR hudchar
 IF T_TRIPWIRE
     LDA #' ' : JSR hudchar      \ TRIPWIRE latch: the id of the EARLIEST
     LDA #'T' : JSR hudchar      \ checkpoint that saw the watched byte

@@ -48,15 +48,15 @@ DV_FIELDS = DRV_VARS+15                 ; PAL fields consumed by the last frame,
 DRV_GLUE = $10A0                        ; anim/HUD glue pocket
 DRV_CLR = $1100                         ; input block + flip scheduler; the unrolled framebuffer clears moved to BANK C 2026-08-16, and the whole driver slid $2200 -> $2100 with DRV_ORG 2026-08-17 (2026-08-14: the sincos overlay moved to bank A $BA00 with STEPTAB/USEVEC; the driver packs below the engine PMOVE region)
 PM_FXW = $0D00                          ; world-fraction bytes of the CANDIDATE/committed position, x at +0 / y at +2 (4-byte block $096B-$096E, freed by the u8 BSP child staging retirement). Staged by pmf_cand = (candidate 8.8-prescaled byte0) << 3; consumed by the EXACT node point-on-side (axis ties + node_band) and nowhere else. Harnesses that poke the $90-$93 raws directly MUST poke these too (zero for integer positions).
-D_ENABLE = $0D7E                        ; forward-coherence bbox cache master switch
-D_FWD = $0D7F                           ; per-frame flag: move was forward-only
+D_ENABLE = $0D7E                        ; FREE 2026-09-04 (was the forward-coherence bbox cache master switch)
+D_FWD = $0D7F                           ; still written by pmove; no longer read by the engine (cache gone 2026-09-04)
 VXCACHE_STATE = $0900                   ; THE BITMAP PAGE: VRCACHE_VALID+VDONE+VXCACHE_VALID+RCACHE_COMPUTED (boot zeroes the whole page)
 VXCACHE_STATE_LEN = $0100               ; bytes to zero at boot (the whole bitmap page)
 VXCACHE_ENABLE = $0D5D                  ; translation vertex cache switch (scalars block $05xx -> $1Dxx sqr swap -> $19xx window slide -> $19DB->$19DD 2026-08-22 to clear the span pool 15th/16th planes; vxcache_prev_ab follows it)
 .if ::BANKED
-RCACHE_STATE = $AF00       ; rotation cache header+bitmaps (bank WALK)
+RCACHE_STATE = $AF00   ; FREE 2026-09-04 (extent cache removed)       ; rotation cache header+bitmaps (bank WALK)
 .else
-RCACHE_STATE = $C500
+RCACHE_STATE = $C500   ; FREE 2026-09-04 (extent cache removed)
 .endif
 RCACHE_STATE_LEN = $0089                ; bytes to zero at boot
 .if ::BANKED

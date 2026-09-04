@@ -47,6 +47,7 @@ ap.add_argument('--mask', type=int, default=None)
 ap.add_argument('--nostraddle', action='store_true')
 ap.add_argument('--defs', default='')
 ap.add_argument('--stride', type=float, default=None)
+ap.add_argument('--dump', default=None, help='write per-frame rows to this JSON')
 ap.add_argument('--overhead', type=int, default=0)
 ap.add_argument('--trace', default=None)
 ap.add_argument('--verbose', action='store_true', help='per-frame lines')
@@ -75,13 +76,27 @@ VIEW_LOCS = [(0xFFEE72, 0xFFDCBA, 0x3C), (0x002E29, 0x005EEB, 0x04),
              (0x00DF9A, 0x003CC8, 0xCC), (0x00B636, 0x0002E9, 0x88)]
 VIEWS_DIST = 256
 
-D_ENABLE = sym('D_ENABLE', banked=1)
-D_FWD = sym('D_FWD', banked=1)
-CACHEPOS = sym('bca_cachepos', banked=1)
-ZBV = sym('zp_bv_entry', banked=1)
-CLASSES = {sym('dbox_check', banked=1) & 0xFF: 'D',
-           sym('box_classify', banked=1) & 0xFF: 'prist',
-           sym('bbox_check_angle', banked=1) & 0xFF: 'rcache'}
+# THE EXTENT CACHE MAY NOT EXIST (2026-09-04): it was removed, so every
+# cache symbol is optional here.  With HAS_CACHE false the bench runs ONE
+# engine -- there is no twin to compare against, and the per-frame cycles
+# ARE the answer.  The tool still works on older trees, which is what the
+# before/after comparison needs.
+def _opt(name):
+    try:
+        return sym(name, banked=1)
+    except Exception:
+        return None
+D_ENABLE = _opt('D_ENABLE')
+D_FWD = _opt('D_FWD')
+CACHEPOS = _opt('bca_cachepos')
+ZBV = _opt('zp_bv_entry')
+HAS_CACHE = None not in (D_ENABLE, D_FWD, CACHEPOS, ZBV)
+CLASSES = {}
+for _n, _t in (('dbox_check', 'D'), ('box_classify', 'prist'),
+               ('bbox_check_angle', 'rcache')):
+    _a = _opt(_n)
+    if _a is not None:
+        CLASSES[_a & 0xFF] = _t
 BANK_STATE = 7                  # bca memo/state bank (walk group)
 
 
@@ -428,10 +443,12 @@ def main():
     frames_script = {'armour': armour_script, 'views': views_script,
                      'corpus': corpus_script}[ARGS.scenario]
     mover = Mover(ARGS.stride, ARGS.overhead)
-    eng, prs = mkeng(), mkeng()
-    mem, pmem = eng.sc.mpu.memory, prs.sc.mpu.memory
-    mem[D_ENABLE] = 1
-    pmem[D_ENABLE] = 0
+    eng, prs = mkeng(), (mkeng() if HAS_CACHE else None)
+    mem = eng.sc.mpu.memory
+    pmem = prs.sc.mpu.memory if prs is not None else None
+    if HAS_CACHE:
+        mem[D_ENABLE] = 1
+        pmem[D_ENABLE] = 0
     if ARGS.mask is not None and ARGS.mask != BUILD_MASK:
         patch_refresh_mask(mem, ARGS.mask)
         patch_refresh_mask(pmem, ARGS.mask)      # twin never probes; parity anyway
@@ -443,8 +460,9 @@ def main():
         m = r.sc.mpu.memory; save = m[0xFE30]; m.select(BANK_STATE)
         r.sc._run(entry); m.select(save)
     if ARGS.anim:
-        for r in (eng, prs):
+        for r in (eng, prs) if prs is not None else (eng,):
             anim(r, ANIM_INIT)
+    dump_rows = []
     tracers = None
     if ARGS.trace:
         tracers = (hook_tracer(eng), hook_tracer(prs))
@@ -472,7 +490,7 @@ def main():
         mem[D_FWD] = (mover.fields(cyc) if (ARGS.dfwd_fields and fwd and cyc) else fwd)
         if ARGS.anim:                       # movers advance identically on both twins
             f = mover.fields(cyc) if cyc else 1
-            for r in (eng, prs):
+            for r in (eng, prs) if prs is not None else (eng,):
                 r.sc.mpu.memory[ANIM_FIELDS] = f
                 anim(r, ANIM_TICK)
         try:
@@ -481,15 +499,20 @@ def main():
             print(f'  frame {i} {phase}: no floor at ({px:.0f},{py:.0f}) — stopping')
             break
         cyc = eng.render_frame(px, py, ab, fz)
-        spoil(pmem)
-        p = prs.render_frame(px, py, ab, fz)
-        if fb(eng) != fb(prs):
-            bad += 1
-            print(f'  FB MISMATCH frame {i} {phase} ({px:.0f},{py:.0f},{ab})')
+        if HAS_CACHE:
+            spoil(pmem)
+            p = prs.render_frame(px, py, ab, fz)
+            if fb(eng) != fb(prs):
+                bad += 1
+                print(f'  FB MISMATCH frame {i} {phase} ({px:.0f},{py:.0f},{ab})')
+        else:
+            p = cyc                          # no twin: the frame IS the answer
+        if ARGS.dump is not None:
+            dump_rows.append([phase, round(px, 3), round(py, 3), ab, int(fwd), cyc])
         if tracers:
             traces.append((phase, px, py, ab, fwd, cyc, p,
                            tracers[0].checks, tracers[1].checks))
-        cls = CLASSES.get(mem[ZBV], '?')
+        cls = CLASSES.get(mem[ZBV], '?') if HAS_CACHE else 'one'
         if phase not in agg:
             order.append(phase)
         a = agg[phase]
@@ -502,6 +525,10 @@ def main():
             dist += math.hypot(px - last[0], py - last[1])
         last = (px, py)
         i += 1
+    if ARGS.dump is not None:
+        import json as _json
+        _json.dump(dump_rows, open(ARGS.dump, 'w'))
+        print(f'  wrote {len(dump_rows)} frames to {ARGS.dump}')
     print(f'{"phase":16s} {"n":>4s} {"cached":>9s} {"pristine":>9s} '
           f'{"save":>6s} {"fields":>6s} {"pfield":>6s} {"fsave":>6s}  classes')
     tot = [0, 0, 0, 0, 0]

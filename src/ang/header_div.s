@@ -72,7 +72,7 @@ SEG_CODE
 .else
 SEG_HIGH
 .endif
-.export bbox_check_angle
+; (.export bbox_check_angle died 2026-09-04 with the extent cache)
 .import span_has_gap                    ; fused visible exits (bca.s) chain
 ang_head:
 ; (slope_div is GONE — option F, 2026-07-17: the corner pipeline reads

@@ -41,18 +41,19 @@ POSE = {'DV_ANGIDX': 0x3D, 'DV_BACKHI': FB >> 8,
         'DV_PXF': 0xD2, 'DV_PXL': 0xE6, 'DV_PXH': 0xFF,
         'DV_PYF': 0xE3, 'DV_PYL': 0x1D, 'DV_PYH': 0x00,
         'DV_FIELDS': 0x03}
-EXPECT = "X=FFE6.D2 Y=001D.E3 R=F4 F=03 P"   # angidx $3D * 4 = $F4; P = the
-                                            # class letter with zp_bv_entry = 0
-                                            # (neither cache entry)
+EXPECT = "X=FFE6.D2 Y=001D.E3 R=F4 F=03"    # angidx $3D * 4 = $F4.  The
+                                            # trailing class letter died
+                                            # 2026-09-04 with the extent
+                                            # cache: one class, nothing
+                                            # to report.
 
 
-def run(img, base, c02, font_at='same', bv=0):
+def run(img, base, c02, font_at='same'):
     """font_at: 'same' = glyphs live at the probed base; an address =
     they live THERE instead (the probe guessed wrong); None = nowhere.
-    bv = zp_bv_entry's low byte (the frame's bbox-cache class entry)."""
+"""
     mem = ObservableMemory()
     mem[HUD_ORG:HUD_ORG + len(img)] = list(img)
-    mem[symmap.sym('zp_bv_entry', banked=1, c02=c02)] = bv
     where = base if font_at == 'same' else font_at
     for c in range(32, 128) if where is not None else ():   # synthetic font
         o = where + (c - 32) * 8
@@ -117,17 +118,6 @@ def one(c02):
         ok = ok and good
         print(f'  {label}: "{got}"  {"ok" if good else "*** WRONG ***"}'
               + ('  SPILLED past row 0' if spill else ''))
-
-    # the class letter follows zp_bv_entry's low byte: D = dbox_check,
-    # R = bbox_check_angle, P = anything else (box_classify)
-    for name, letter in (('dbox_check', 'D'), ('bbox_check_angle', 'R'),
-                         ('box_classify', 'P')):
-        bv = symmap.sym(name, banked=1, c02=c02) & 0xFF
-        got, _ = run(img, abi.HUD_FONT_B, c02, bv=bv)
-        good = got is not None and got == EXPECT[:-1] + letter
-        ok = ok and good
-        print(f'  class {name:17s} -> "{got[-1] if got else "?"}"  '
-              f'{"ok" if good else "*** WRONG ***"}')
 
     # and with no probe result (0), it must draw nothing rather than blit
     # from page zero
