@@ -508,11 +508,13 @@ def main():
         else:
             p = cyc                          # no twin: the frame IS the answer
         if ARGS.dump is not None:
-            dump_rows.append([phase, round(px, 3), round(py, 3), ab, int(fwd), cyc])
+            dump_rows.append([phase, round(px, 3), round(py, 3), ab, int(fwd), cyc, None])
         if tracers:
             traces.append((phase, px, py, ab, fwd, cyc, p,
                            tracers[0].checks, tracers[1].checks))
         cls = CLASSES.get(mem[ZBV], '?') if HAS_CACHE else 'one'
+        if ARGS.dump is not None:
+            dump_rows[-1][6] = cls
         if phase not in agg:
             order.append(phase)
         a = agg[phase]

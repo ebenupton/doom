@@ -158,6 +158,9 @@ SEG_BANKC
 .export span_init, span_mark_solid
 .export interp_store, draw_clipped_line
 .export draw_clipped_line_s16, draw_clipped_line_s16_h
+.export adyn_ctr                        ; emitted-segment counter: the BSP
+                                        ; walk samples it around a far
+                                        ; descent (dynamic always-descend)
 .export dcl_emit_segment                ; UNCLIPPED emit: bsp/objects.s
                                         ; feeds it whole lines when the
                                         ; billboard is proven visible

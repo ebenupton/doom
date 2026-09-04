@@ -425,10 +425,14 @@ nodes = [
 # packer bakes them as DSGN b2 (right box) / b3 (left box); the walk and
 # BOTH python mirrors skip the check and descend. Node ids are
 # POST-transform (this list).
+# 2026-09-04: the bake is OFF by default (wad_packed.py) — DSGN b2/b3 are
+# runtime state for the walk's DYNAMIC always-descend bits, and the static
+# policy measured a net loss once those run.  The mirrors follow the packer,
+# so DOOM_ADESC_ON restores both together for a measurement run.
 try:
     import json as _json
-    if os.environ.get('DOOM_ADESC_OFF'):
-        ADESC = set()                        # measurement runs: policy off
+    if not os.environ.get('DOOM_ADESC_ON'):
+        ADESC = set()                        # bits are runtime state now
     else:
         ADESC = {tuple(p) for p in _json.load(
             open(os.path.join(os.path.dirname(os.path.abspath(__file__)),

@@ -1517,9 +1517,13 @@ dcl_es_degen:
 ;  induction from the initial span, and every emit inherits that.
 ;  test_span_band is the gate.)
 dcl_es_record:
-; (the records hook died with the FUSED cutover 2026-08-25 — the armed
-;  aperture lines never reach this core any more; the fused walker
-;  plots THROUGH this routine with its records machinery gone)
+; (the records hook died with the FUSED cutover 2026-08-25 — the fused
+;  walker plots THROUGH this routine with its records machinery gone)
+; DYNAMIC ALWAYS-DESCEND (2026-09-04, Eben): one byte counts emitted
+; segments so the BSP walk can tell whether a subtree it descended
+; actually drew anything.  Every visible fragment in the frame — walls,
+; portals, billboard art — passes here, and only here.
+   INC adyn_ctr
 dcl_es_no_record:
 ; (LINE_OUT capture RETIRED 2026-07-26 — see the vertical emit note.)
    LDA zp_seg_start_x
@@ -1804,4 +1808,15 @@ SEG_HIGH
 ; wrappers staging the range, so CLIP call sites stay 5 bytes
 ; (dcl_rec_flat_span / _left / dcl_rec_right died 2026-08-25 —
 ;  the u8 core has no record consumers left)
+SEG_BANKC
+
+; ============================================================================
+; adyn_ctr — emitted-segment counter for the walk's dynamic always-descend
+; bit (2026-09-04, Eben).  dcl_emit_segment bumps it once per real
+; fragment; src/bsp/walk.s samples it either side of a far descent to
+; decide whether that subtree earned its speculation.  Main RAM (RWC), so
+; it is writable in both builds and readable with any bank paged in.
+; ============================================================================
+.segment "RWC"
+::adyn_ctr: .byte 0
 SEG_BANKC

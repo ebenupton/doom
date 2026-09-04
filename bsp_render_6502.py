@@ -64,6 +64,31 @@ def _mem_banked(mem):
     return type(mem).__name__ == 'BankedMemory'
 
 
+ADESC_NODES = 194                          # MAX_NODES (walk.s gate bound)
+
+
+def adesc_reset_mem(sc):
+    """Clear the walk's DYNAMIC always-descend bits (NODE_DSGN b3/b2).
+
+    The engine keeps those bits across frames and has no wipe of its own:
+    after a teleport the stale bits cost one frame of over-descent and the
+    judge clears them.  A bench that steps between unrelated poses in one
+    engine is not a motion the predictor is meant to survive, so the bench
+    clears them and a cold frame descends exactly as the reference does.
+    """
+    from symmap import sym as _sym
+    mem = sc.mpu.memory
+    banked = hasattr(mem, 'select')        # banked_bsp swaps in BankedMemory
+    base = _sym('NODE_DSGN', banked=1) if banked else _sym('NODE_DSGN')
+    if banked:
+        saved = mem[0xFE30]
+        mem.select(7)                      # abi.BANK_WALK: the node SoA
+    for i in range(ADESC_NODES):
+        mem[base + i] &= 0xF3
+    if banked:
+        mem.select(saved)
+
+
 def poke_init_frame_state(mem):
     """Mirror render_frame's inline per-frame init for partial-flow
     harnesses (the standalone jt_br_init_frame entry retired 2026-07-15):
@@ -276,12 +301,31 @@ class BspRender6502:
         mem[ZP_CONE] = 1 if c_one else 0
         mem[_sym('bca_ab')] = angle_byte & 0xFF  # angle-space bbox view angle
 
+        # --- Dynamic always-descend: the harness owns the discontinuity.
+        # The engine keeps its productivity bits (NODE_DSGN b3/b2) across
+        # frames and has NO wipe — after a teleport the stale bits cost one
+        # frame of over-descent and the judge clears them.  A bench that
+        # steps between unrelated poses in one engine is not a motion the
+        # predictor is meant to survive, so clear the bits on a jump here,
+        # with the same windows the walk's kinematics can never reach:
+        # 128 world units, or 24 angle bytes (a max-rate turn frame is 14).
+        _prev = getattr(self, '_adesc_pose', None)
+        if _prev is None or abs(player_x - _prev[0]) > 128 \
+                or abs(player_y - _prev[1]) > 128 \
+                or min((angle_byte - _prev[2]) % 256,
+                       (_prev[2] - angle_byte) % 256) > 24:
+            self.adesc_reset()
+        self._adesc_pose = (player_x, player_y, angle_byte)
+
         sc._run(ENTRY_BR_VIEW_SETUP)
         sc.init()
         sc.clear_screen()
         cyc = sc._run(ENTRY_BR_RENDER_FRAME, max_cycles=10000000)
         self.last_cycles = cyc
         return cyc
+
+    def adesc_reset(self):
+        adesc_reset_mem(self.sc)
 
     def blit_framebuffer_to(self, surface):
         """Render the 256x160 BBC mode-4 framebuffer into `surface`.

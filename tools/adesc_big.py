@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Leaf-1 always-descend verdicts over the FULL inside corpus (Eben,
 2026-08-20): 277k positions x 4 orientations = 1.11M frames, sharded
-across worker processes.  DOOM_ADESC_OFF=1 everywhere: this is a
+across worker processes.  the static bake stays off everywhere: this is a
 from-scratch re-derivation, no baked policy.
 
 PASS 1  every frame, watcher records per (node, boxside): visits,
@@ -15,7 +15,10 @@ Verdict WIN iff never worse at ANY frame and total Δ < 0.
 Progress: one line per minute to stderr.  Output: build/adesc_l1_big.json
 """
 import os, sys, json, time
-os.environ['DOOM_ADESC_OFF'] = '1'
+os.environ.pop('DOOM_ADESC_ON', None)     # 2026-09-04: the bake is off by
+                                          # DEFAULT now (DSGN b2/b3 are the
+                                          # walk's dynamic bits); the sweep
+                                          # still wants a policy-free base
 os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
 os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

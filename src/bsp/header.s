@@ -620,6 +620,10 @@ code_head:
 .import FW_TOUCH                        ; fused walker's zero-touch flag
                                         ; (clip/fused.s owns the block)
 .import draw_clipped_line_s16, draw_clipped_line_s16_h
+.import adyn_ctr                        ; emitted-segment counter (clip/dcl.s
+                                        ; owns the byte): the walk samples
+                                        ; it around a far descent to see
+                                        ; whether the subtree drew anything
 .import dcl_emit_segment                ; the UNCLIPPED emit: objects.s
                                         ; hands it whole lines once the
                                         ; billboard is proven visible

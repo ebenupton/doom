@@ -126,6 +126,14 @@ def setup_wad(sc):
 
 
 def setup_view_zp(sc, px, py, ab):
+    # Dynamic always-descend (2026-09-04): every driver that stages a pose
+    # by hand comes through here, and they all TELEPORT between unrelated
+    # poses in one engine.  The engine has no wipe, so clear its
+    # productivity bits (NODE_DSGN b3/b2) with the pose — otherwise a cold
+    # frame speculates on the last pose's world and the traversal stops
+    # matching the reference.
+    from bsp_render_6502 import adesc_reset_mem
+    adesc_reset_mem(sc)
     # EVERY SLOT BY NAME.  These were literal mem[0]..mem[$0A] and
     # mem[$90]..mem[$93] -- the view block's addresses circa whenever the
     # function was written.  Zero page is linker-allocated and

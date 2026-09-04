@@ -526,18 +526,32 @@ r0_far:
    PAGE BANK_WALK                          ; DSGN read (bbox_visible would
                                         ; have paged this anyway — its
                                         ; no-page entry is used below)
+; DYNAMIC ALWAYS-DESCEND (2026-09-04, Eben).  DSGN b3 (LEFT) / b2 (RIGHT)
+; say "last time we descended here, pixels came out": set = skip the
+; 571-cycle classify and descend on faith, and the judge below then sets
+; or clears the bit from the emitted-segment counter, so a subtree that
+; stops drawing costs one wasted descent and goes back to being checked.
+; The bit can only ADD descents, never remove one, and over-descent is
+; provably harmless.  These are the STATIC always-descend policy's old
+; bits: it measured a net loss once this runs, so the bake is off and the
+; gate is one plane read for both.
    LDA NODE_DSGN,X
-   AND #$08                                ; ADESC: LEFT box always-descends
-   BNE r0_far_vis
+   AND #$08
+   BNE r0_far_go                           ; speculate: no test at all
    JSR bbox_visible_l2
    BCC rc_ret                              ; far invisible: this node is done
-r0_far_vis:
+r0_far_go:
+   LDA adyn_ctr                            ; the judge needs a before-sample
+   PHA
+   LDA zp_node_ch_l                        ; ... and the parent id: the
+   PHA                                     ; descent overwrites both
    LDX zp_node_ch_l
    LDA NODE_CLLO,X                         ; inline LEFT fetch
    STA zp_node_ch_l
    LDA NODE_TYPE,X
    ASL A                                   ; N = NF_LLEAF
-   JMP rc_descend_far                      ; TAIL call either way
+   JSR rc_descend_far                      ; a CALL now: the judge follows
+   JMP adyn_judge_l
 ; (r0_far_i, the near-invisible arc, died with the near test.)
 rc_ret:
    RTS
@@ -572,19 +586,63 @@ r1_far:
    SPAN_IS_NOT_FULL
    BEQ bsp_done_full
    PAGE BANK_WALK                          ; (see r0_far)
-   LDA NODE_DSGN,X
-   AND #$04                                ; ADESC: RIGHT box always-descends
-   BNE r1_far_vis
+   LDA NODE_DSGN,X                         ; DSGN b2 = RIGHT (see side 0)
+   AND #$04
+   BNE r1_far_go
    JSR bbox_visible_l2
    BCC rc_ret1
-r1_far_vis:
+r1_far_go:
+   LDA adyn_ctr
+   PHA
+   LDA zp_node_ch_l
+   PHA
    LDX zp_node_ch_l
    LDA NODE_CRLO,X                         ; inline RIGHT fetch
    STA zp_node_ch_l
    LDA NODE_TYPE,X                         ; N = NF_RLEAF
-   JMP rc_descend_far                      ; TAIL call either way
+   JSR rc_descend_far
+   JMP adyn_judge_r
 ; (r1_far_i died with the near test — mirror.)
 rc_ret1:
+   RTS
+
+; adyn_judge_l / _r — the stack holds (parent id, counter before).
+; Pixels since the sample => arm this side's bit, none => disarm it.
+; One entry per side so the mask is an immediate.  A/X are dead on a
+; walk return (every caller reloads them), Y is untouched.
+adyn_judge_l:
+   PLA
+   TAX                                     ; parent node id
+   PLA
+   CMP adyn_ctr                            ; unchanged => nothing was drawn
+   BEQ ajl_clear
+   PAGE BANK_WALK                          ; the subtree paged for itself
+   LDA NODE_DSGN,X
+   ORA #$08
+   STA NODE_DSGN,X
+   RTS
+ajl_clear:
+   PAGE BANK_WALK
+   LDA NODE_DSGN,X
+   AND #<~$08
+   STA NODE_DSGN,X
+   RTS
+adyn_judge_r:
+   PLA
+   TAX
+   PLA
+   CMP adyn_ctr
+   BEQ ajr_clear
+   PAGE BANK_WALK                          ; the subtree paged for itself
+   LDA NODE_DSGN,X
+   ORA #$04
+   STA NODE_DSGN,X
+   RTS
+ajr_clear:
+   PAGE BANK_WALK
+   LDA NODE_DSGN,X
+   AND #<~$04
+   STA NODE_DSGN,X
    RTS
 .endscope
 
@@ -643,3 +701,15 @@ zp_seg_sy_bbot_hi = $0C7F
 ; crossing writes the projection input slots directly.)
 ; Working-saver for projecting X after project_y trashes vxlo/hi
 ; Per-seg back-face / linedef state
+
+; ============================================================================
+; Dynamic always-descend (2026-09-04) needs NO state of its own: the bits
+; ARE NODE_DSGN b3 (LEFT far) / b2 (RIGHT far), the static always-descend
+; policy's old home — retired because it measures a net loss once this
+; runs.  There is no view-change wipe either (Eben, same day): after a
+; teleport the stale bits cost ONE frame of over-descent and the judge
+; clears them, so the engine carries no discontinuity guard.  The test
+; benches step between unrelated poses in one engine, which is not a
+; motion the predictor is meant to survive, so THEY clear the bits —
+; bsp_render_6502.render_frame does it whenever the pose jumps.
+; ============================================================================

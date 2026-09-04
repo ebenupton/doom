@@ -1350,10 +1350,16 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # skips bbox_visible outright for these check sites (near sites fold
     # the bit into the same-as-parent serve mask for free; far sites pay
     # a ~10-cycle gate). Node ids are post-transform, same as this bake.
+    # 2026-09-04: the bake is OFF by default.  b2/b3 are now RUNTIME state —
+    # the walk's dynamic always-descend bits (src/bsp/walk.s) own them, and
+    # measured with those running the static policy is a net LOSS on both
+    # corpora (walk 228,359 -> 228,036 cyc/frame and suite 3,150,712 ->
+    # 3,138,102 with it off).  The sweep verdicts stay in adesc_policy.json;
+    # DOOM_ADESC_ON re-bakes them for a measurement run.
     import json as _json, os as _os
     try:
-        if _os.environ.get('DOOM_ADESC_OFF'):
-            _adesc = set()                   # measurement runs: policy off
+        if not _os.environ.get('DOOM_ADESC_ON'):
+            _adesc = set()                   # bits are runtime state now
         else:
             _adesc = {tuple(p) for p in _json.load(
                 open(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
