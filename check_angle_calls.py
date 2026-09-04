@@ -58,7 +58,7 @@ def standalone(top,bot,left,right,px,py,ab):
     m[F_PYS]=py&0xFF; m[F_PYS+1]=(0xFF if py<0 else 0)^0x80
     m[F_ZNODE]=0; m[F_ZSIDE]=0                 # box -> planes at node 0, side 0
     _pr=_symf('bca_tail_postrc')             # moving contract: tail vector
-    m[_symf('zp_tail_vec')]=_pr&0xFF; m[_symf('zp_tail_vec')+1]=_pr>>8
+    # (tail vector gone 2026-09-04: the arms jump direct)
     for f,val in enumerate((top,bot,left,right)):
         m[F_BBP[2*f]]=val&0xFF; m[F_BBP[2*f+1]]=((val>>8)^0x80)&0xFF  # offset-binned hi
     _st.pc=F_BCA;_st.sp=0xDD;m[0x1DF]=0xFF;m[0x1DE]=0xFF

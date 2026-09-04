@@ -127,21 +127,21 @@ ORG &7800
 \ engine runs; the engine then tramples the stage freely).  Copy up
 \ now: the OS has served its last call (the R2 RUN went raw),
 \ interrupts are off, and the $FFFA+ hardware vectors stay intact.
-\ Pointers: T_ZP_CLRP (the boot clear pair) as src, T_ZP_TAIL_VEC as
+\ Pointers: T_ZP_CLRP (zp_save2) as src, T_ZP_BOOTDST (zp_ox0) as
 \ dst -- both re-aimed by init.
     LDY #0
     STY T_ZP_CLRP
-    STY T_ZP_TAIL_VEC
+    STY T_ZP_BOOTDST
     LDX #&7C
 .uspg
     STX T_ZP_CLRP+1
     TXA
     CLC
     ADC #&7C                    \ $7Cxx -> $F8xx .. $7Fxx -> $FBxx
-    STA T_ZP_TAIL_VEC+1
+    STA T_ZP_BOOTDST+1
 .usb
     LDA (T_ZP_CLRP),Y
-    STA (T_ZP_TAIL_VEC),Y
+    STA (T_ZP_BOOTDST),Y
     INY
     BNE usb
     INX

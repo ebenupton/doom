@@ -643,7 +643,8 @@ BBOX_CORNERS = $0C20                    ; 4 x 8: vx16, vy16, front, vy24 (lo,hi,
 ;     $0A60-$0A6A + $0AFD: 12 bytes back to the scratch page).
 ; angle module + bca workspace relocate when banked (must match slope_div.asm:
 ;   code -> $3400 (entry+3 = $3403); bca workspace -> BCA_WS $3A00).
-.import bbox_check_angle, bca_frame     ; direct (linker-resolved); the bbox.s
+; (the bbox_check_angle / bca_frame imports died 2026-09-04 with the
+;  extent cache -- neither symbol exists.)                ; the bbox.s
 .import box_classify                    ; pristine tier (bbox_visible dispatches
                                         ; on zp_bv_mode — SMC retired)
                                         ; call site bca_check_op is SMC-

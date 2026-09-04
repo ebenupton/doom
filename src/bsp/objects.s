@@ -45,8 +45,6 @@ SEG_WORK
 ;  contract below is unaffected: it binds obj_X and obj_Y only.)
 
 obj_i:       .res 1
-obj_yb_l:    .res 1
-obj_yb_h:    .res 1
 obj_h:       .res 1                        ; (zp had room for obj_n only)
 obj_a:       .res 1
 obj_a2:      .res 1

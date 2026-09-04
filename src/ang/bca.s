@@ -35,9 +35,6 @@
 ; cross-product, both builds.
 ; (RC_P1L/RC_P2L/RC_PH psi planes -- 6 pages of bank B, $A900-$AEFF --
 ;  and RCACHE_COMPUTED -- 59 B on the bitmap page -- FREED 2026-09-04.)
-bca_cach_ab = RCACHE_STATE + $80        ; last frame's angle byte (the D
-                                        ; class needs 'angle unchanged';
-                                        ; ex-bca_prevpos, which was dead)
 .assert RCACHE_STATE + $88 = RCACHE_ENABLE, error, "rcache layout drifted from abi.inc"
 ; RCACHE_ENABLE comes from abi.inc; nonzero -> cache may engage (drivers set it;
                                         ; harness default 0 keeps every existing test
@@ -1170,18 +1167,12 @@ SEG_HIGH
 .if BANKED
 SEG_CODE
 .endif
-.export bca_frame
 .export box_classify
 ; (class exports died 2026-09-04) ;    ; hud.s: the frame's class letter is
                                         ; zp_bv_entry's low byte vs these
-bca_frame:
-; ONE CLASS since the extent cache went (2026-09-04): nothing to choose
-; between, so the per-frame classifier is gone -- no cachepos compare, no
-; D_ENABLE/D_FWD test, no refresh wheel, no vector stores, no wipe.  The
-; angle latch stays: bca_ab is the frame's view angle.
-   LDA bca_ab
-   STA bca_cach_ab
-   RTS
+; (bca_frame DELETED 2026-09-04: with the extent cache gone its only
+;  output, bca_cach_ab, had no reader left -- the D classifier was the one
+;  consumer of "angle unchanged".  The whole per-frame hook went.)
 
 ; (rc_wipe, dbox_check, its probe arms and dst_drop -- the forward-
 ;  coherence cache and its refresh wheel -- deleted 2026-09-04.)

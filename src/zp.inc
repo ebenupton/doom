@@ -278,7 +278,8 @@
 .global zp_vxcache_on
 .globalzp zp_bca_p1
 .globalzp zp_bca_p1_h
-.globalzp zp_tail_vec
+.globalzp obj_yb_l
+.globalzp obj_yb_h
 .globalzp fw_ax1
 .globalzp zp_hg_cache
 .globalzp zp_i_x0
@@ -591,13 +592,15 @@ LC_OX1_HI:                     .res 1 ; ROTATED IN (zprotate): 27.8 vs zp_vxcach
                                   ; 2026-07-18)
 zp_bca_p1:                  .res 1 ; [ang]; s16 pair with $C9
 zp_bca_p1_h:                .res 1 ; [ang]
-zp_tail_vec:                .res 2 ; [ang] 2-byte tail vector: the corner arms
-                                  ; end JMP (zp_tail_vec) -> bt_store (armed:
-                                  ; store psis + COMPUTED) or bca_tail_postrc
-                                  ; (moving: nothing stored). Set per frame by
-                                  ; bca_frame; REPLACES the zp_rc_moved flag
-                                  ; ($CB is the high byte -- it was carried
-                                  ; as a FREE pad until 2026-08-31)
+obj_yb_l:                   .res 1 ; ROTATED IN 2026-09-04 (zprotate): 29.1
+                                  ; accesses/frame.  These two bytes were
+obj_yb_h:                   .res 1 ; zp_tail_vec, the corner arms' tail
+                                  ; vector, freed with the extent cache;
+                                  ; the copro's boot page-copy borrowed the
+                                  ; pair and now borrows zp_ox0 instead.
+                                  ; RENAMED IN PLACE -- $C8/$CC/$CD are
+                                  ; hand-baked equates that a shift would
+                                  ; collide.
 LC_TGT_LO:                  .res 1 ; ROTATED IN (zprotate): 18.6 vs t0's 2.4
    .res 1                               ; $CD = t1 (hand-baked)
 fw_ax1:                     .res 1 ; [clip]

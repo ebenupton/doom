@@ -154,7 +154,13 @@ def write_tube_syms():
                      ('T_RZP_SCRSTRT', 'RASTER_ZP_SCRSTRT'),
                      # frame-class vectors the driver aims, and the
                      # pre-init clear pointer
-                     ('T_ZP_TAIL_VEC', 'zp_tail_vec'),
+                     # BOOT SCRATCH, not engine state (2026-09-04): the copro's
+                     # page-copy destination pointer.  It used to borrow
+                     # zp_tail_vec; that pair was freed for hot scalars when the
+                     # extent cache went, so it borrows the CLIP unit's ox pair
+                     # instead -- dead until the engine runs, like zp_save2 (the
+                     # source pointer) right above.
+                     ('T_ZP_BOOTDST', 'zp_ox0'),
                      ('T_ZP_CLRP', 'zp_save2'),
                      ('T_DRV_SINCOS', 'ROM_DRV_SINCOS_C')):
             f.write(f"{t} = &{fsym(s):04X}\n")
@@ -164,7 +170,7 @@ def write_tube_syms():
         # rotation that moved one half, or moved a base out of zero page
         # entirely, would assemble cleanly and produce a wild pointer --
         # so fail the BUILD here instead, where the message is readable.
-        for _base, _hi in (('zp_tail_vec', None),
+        for _base, _hi in (('zp_ox0', None),
                            ('zp_save2', 'zp_old_cur')):
             _a = fsym(_base)
             assert _a < 0x100, (

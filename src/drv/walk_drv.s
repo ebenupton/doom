@@ -263,25 +263,10 @@ vsy0:
     ;     banks explicitly before every engine call anyway. Zero-init is
     ;     safe: even a false-stable first frame sees COMPUTED=0 -> all
     ;     checks take the cold path -> correct results. ---
-    LDA #7
-    STA $FE30                                       ; page bank L2
-    LDA #0
-    TAX
-rcinit:
-    STA RCACHE_STATE,X
-    INX
-    CPX #RCACHE_STATE_LEN
-    BNE rcinit
-    LDA #1
-    STA RCACHE_ENABLE
-    LDA #<(ENG_TAIL_POSTRC)    ; frame-class VECTORS (zp.inc zp_tail_vec
-    STA $CA                     ; $CA/$CB + zp_bv_entry $63/$64): seed the
-    LDA #>(ENG_TAIL_POSTRC)    ; moving targets so the first frame is sane
-    STA $CB                     ; even before bca_frame runs — boot garbage
-    LDA #<(ENG_BOX_CLASSIFY)   ; in a vector would be a wild indirect JMP,
-    STA $63                     ; not a soft mis-class
-    LDA #>(ENG_BOX_CLASSIFY)
-    STA $64
+    ; (THE RCACHE INIT BLOCK DIED 2026-09-04 with the bbox extent cache:
+    ;  no state to zero, no enable to set, and no frame-class vectors to
+    ;  seed.  $63/$64 and $CA/$CB are hot object scalars now -- seeding
+    ;  them here would have written boot garbage over live values.)
     LDA #6
     STA $FE30   ; pq_pump_op lives in the BANK C window —
     LDA #<(pq_pump)            ; page it in for the poke (the RCACHE write

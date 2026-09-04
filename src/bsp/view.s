@@ -216,9 +216,10 @@ fq_y_ok:
                                         ; frame's trig (SEL, main $2C00 —
                                         ; runs under any bank)
    PAGE BANK_WALK
-   JSR bca_frame                           ; rcache epoch keeper (rcache.s);
-                                           ; the D-cache classifier call is
-                                           ; gone — D disabled 2026-07-20
+                                        ; (JSR bca_frame -- the rcache epoch
+                                        ; keeper -- died 2026-09-04 with the
+                                        ; extent cache.  The PAGE above stays
+                                        ; for vxcache_frame below.)
    vxcache_frame                           ; translation-coherence vertex cache
    RTS
 .endscope
