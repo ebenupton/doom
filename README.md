@@ -105,8 +105,8 @@ rounding. The rasteriser has a pure-Python twin proven pixel-exact over a
 ## Building and running
 
 Needs `DOOM1.WAD` (shareware) in the repo root, Python 3 with pygame and
-py65, the vendored `beebasm`, and `ca65`/`ld65` (cc65) on the PATH for
-the engine link.
+py65, and `ca65`/`ld65` (cc65) on the PATH for the engine link and the
+boot stubs.
 
 ```
 python3 play.py               # interactive: pure-Python engine (fast), or
@@ -139,5 +139,5 @@ the [`full-toolchain`](../../tree/full-toolchain) tag.
 ---
 
 Level data © id Software (shareware `DOOM1.WAD`, not included). Rasteriser
-by NJ. Built with [beebasm](https://github.com/stardot/beebasm) and
+by NJ. Built with [cc65](https://cc65.github.io/) and
 validated on [jsbeeb](https://github.com/mattgodbolt/jsbeeb).

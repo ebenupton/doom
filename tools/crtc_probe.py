@@ -52,10 +52,11 @@ def main():
     bias = int(sys.argv[2]) if len(sys.argv) > 2 else 0
     cur = int(sys.argv[3]) if len(sys.argv) > 3 else 0
     loopw = int(sys.argv[4]) if len(sys.argv) > 4 else 0
-    subprocess.run(['./beebasm', '-i', 'tools/crtc_probe.asm',
-                    '-D', f'R8V={r8}', '-D', f'BI={bias}',
-                    '-D', f'CU={cur}', '-D', f'LW={loopw}'], check=True)
-    probe = open('PROBE', 'rb').read()
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
+    import build_boot                  # ca65 since 2026-09-05
+    probe = build_boot.read('crtc_probe',
+                            (f'R8V={r8}', f'BI={bias}',
+                             f'CU={cur}', f'LW={loopw}'))
     boot = b'*RUN PROBE\r'
     write_ssd([('!BOOT', 0x1900, 0x1900, boot),
                ('PROBE', 0x1900, 0x1900, probe)], 'probe.ssd')

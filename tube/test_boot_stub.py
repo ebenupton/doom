@@ -26,11 +26,9 @@ from py65.devices.mpu65c02 import MPU
 
 def main():
     env = dict(os.environ, DOOM_CPU='65c02')
-    subprocess.run(['./beebasm', '-i', 'tube/tubedrv.asm'], check=True,
-                   capture_output=True, env=env)
-    boot = open('COPROT', 'rb').read()
-    res = open('COPRES', 'rb').read()
-    os.remove('COPROT'); os.remove('COPRES')
+    sys.path.insert(0, os.path.join(ROOT, 'tools'))
+    import build_boot                  # ca65 since 2026-09-05
+    boot, res = build_boot.tubedrv()
 
     base = ObservableMemory()
     base[0x7800:0x7800 + len(boot)] = list(boot)

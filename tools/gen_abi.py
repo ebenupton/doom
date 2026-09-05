@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """Generate the cross-language ABI constant files from ONE table.
 
-Every address that crosses a language boundary (ca65 engine <-> beebasm
-drivers <-> Python harness/builders) lives HERE and nowhere else. Private
+Every address that crosses a language boundary (ca65 engine <-> ca65 boot
+stubs <-> Python harness/builders) lives HERE and nowhere else. Private
 copies of these addresses have shipped three broken-disc bugs (vrcache_ab,
 the HUD var block, the test-harness pokes) — see project_bank_reshuffle.
 
 Outputs (all checked in; regenerate after editing the table):
   src/abi.inc    ca65   (.if ::BANKED variants where flat differs)
-  abi_beeb.inc   beebasm (banked values only — discs are banked builds)
   abi.py         Python  (NAME = banked value; NAME_FLAT where it differs)
+
+The beebasm projection (abi_beeb.inc) went with beebasm on 2026-09-05 —
+the boot stubs are ca65 sources and .include src/abi.inc directly.
 
 Run: python3 tools/gen_abi.py   (from the repo root)
 """
@@ -138,12 +140,6 @@ with open('src/abi.inc', 'w') as f:
                     + f'; {comment}\n.else\n{name} = {fmt_val(flat, "$")}\n.endif\n')
     f.write('.endif\n')
 
-with open('abi_beeb.inc', 'w') as f:
-    f.write(f'\\ {HDR.replace(chr(10), chr(10)+chr(92)+" ")}\n')
-    f.write('\\ (banked values only: the discs are banked builds)\n')
-    for name, bank, flat, comment in ABI:
-        f.write(f'{name} = {fmt_val(bank, "&")}'.ljust(40) + f'\\ {comment}\n')
-
 with open('abi.py', 'w') as f:
     f.write(f'# {HDR.replace(chr(10), chr(10)+"# ")}\n')
     env = {}        # banked values
@@ -186,4 +182,4 @@ for name, bank, flat, comment in ABI:
         _occ[off + i] = name
 print(f'DRV_VARS block: {len(_occ)}/16 bytes used, no collisions')
 
-print('wrote src/abi.inc, abi_beeb.inc, abi.py')
+print('wrote src/abi.inc, abi.py')

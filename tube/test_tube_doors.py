@@ -137,7 +137,7 @@ def main():
     img = build_image()
     T = {}
     for l in open(os.path.join(ROOT, 'tube/tube_syms.inc')):
-        m = re.match(r'T_(\w+) = &([0-9A-F]+)', l.strip())
+        m = re.match(r'T_(\w+) = [&$]([0-9A-F]+)', l.strip())
         if m:
             T[m.group(1)] = int(m.group(2), 16)
     AW = symmap.sym('ANIM_WS', banked=0, c02=1)

@@ -31,15 +31,10 @@ LABELS = os.path.join(ROOT, 'build', 'hostt.labels')
 
 def assemble():
     os.makedirs(os.path.dirname(LABELS), exist_ok=True)
-    subprocess.run(['./beebasm', '-i', 'tube/hostg.asm', '-d',
-                    '-labels', LABELS], check=True, cwd=ROOT,
-                   stdout=subprocess.DEVNULL)
-    with open(os.path.join(ROOT, 'HOSTT'), 'rb') as f:
-        code = f.read()
-    os.remove(os.path.join(ROOT, 'HOSTT'))
-    txt = open(LABELS).read()
-    sym = {m.group(1): int(m.group(2))
-           for m in re.finditer(r"'(\w+)':(\d+)L?", txt)}
+    sys.path.insert(0, os.path.join(ROOT, 'tools'))
+    import build_boot                  # ca65 since 2026-09-05: bytes from the
+    code = build_boot.hostt(LABELS)    # link, symbols from ld65's label dump
+    sym = build_boot.symbols(LABELS)
     return code, sym
 
 

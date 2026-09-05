@@ -6,7 +6,7 @@ and reads results back.  Used for comparison testing against EndpointClipSpans.
 import os
 
 # CPU target: set DOOM_CPU=65c02 to build the engine with -D C02=1 and run it on
-# py65's 65C02 core; anything else = plain 6502. Drives both the beebasm flag and
+# py65's 65C02 core; anything else = plain 6502. Drives both the build flag and
 # the MPU class so the build and the executor always agree.
 _C02 = '1' if os.environ.get('DOOM_CPU', '').lower() in ('65c02', 'c02', '1') else '0'
 if _C02 == '1':

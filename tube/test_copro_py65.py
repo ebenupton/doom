@@ -53,15 +53,15 @@ def build_image():
     mem[_scb:_scb + len(_sc)] = _sc
     # (no plot pokes: plot_h/plot_v/RASTER_ENTRY are equates to the
     # glue's emitter slots; loading COPRES below provides the bodies)
-    subprocess.run(['./beebasm', '-i', 'tube/tubedrv.asm'], check=True,
-                   capture_output=True)
+    sys.path.insert(0, os.path.join(ROOT, 'tools'))
+    import build_boot                  # ca65 since 2026-09-05
+    _coprot, _copres = build_boot.tubedrv()
     # OBJECTS ON for the copro (2026-09-02, full-object parity): the
     # engine default is off (ok_state=1 -> anim_init zeroes OBJ_ANYB);
     # the parasite carries the FULL 52-billboard set since phase 2, and
     # the pipeline gate proves it against the banked reference.
     mem[symmap.sym('ok_state')] = 0
-    res = open('COPRES', 'rb').read(); os.remove('COPRES')
-    os.remove('COPROT')                       # boot stub: not needed here
+    res = _copres                             # boot stub: not needed here
     mem[0xF600:0xF600 + len(res)] = res       # RESIDENT at the top of memory
     return mem
 
@@ -156,7 +156,7 @@ def main():
     import doom_wireframe as _dw, anim_sectors as _an, re as _re
     T = {}
     for _l in open(os.path.join(ROOT, 'tube/tube_syms.inc')):
-        _m = _re.match(r'T_(\w+) = &([0-9A-F]+)', _l.strip())
+        _m = _re.match(r'T_(\w+) = [&$]([0-9A-F]+)', _l.strip())
         if _m:
             T[_m.group(1)] = int(_m.group(2), 16)
     AW = symmap.sym('ANIM_WS', banked=0, c02=1)

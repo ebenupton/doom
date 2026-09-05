@@ -86,10 +86,9 @@ def copro_frame_commands():
 
 
 def host_rasterize(cmds):
-    subprocess.run(['./beebasm', '-i', 'tube/hostg.asm'], check=True,
-                   capture_output=True)
-    host = open('HOSTT', 'rb').read()
-    os.remove('HOSTT')
+    sys.path.insert(0, os.path.join(ROOT, 'tools'))
+    import build_boot                  # ca65 since 2026-09-05
+    host = build_boot.hostt()
     mem = bytearray(0x10000)
     mem[0x1900:0x1900 + len(host)] = host
     mpu = MPU()

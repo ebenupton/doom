@@ -8,7 +8,7 @@ walk_drv at $2000. Cursor keys: Left/Right turn, Up/Down move.
 This file OWNS the banked side (banked_files()); the disc itself is
 written by tube/build_tube_game.py, which main() delegates to — either
 entry point produces the same single artifact."""
-import os, subprocess, builtins
+import os, sys, subprocess, builtins
 os.environ.setdefault('DOOM_ANIM', '1')     # animated doors/lifts on the disc
 os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
 os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
@@ -149,7 +149,10 @@ def banked_files():
         'bank-B code may only call the fixed-start PMOVE region (see ' \
         'pmf_commit in pmove.s). Otherwise the variants need their own ' \
         'copies AND a loader change.'
-    subprocess.run(['./beebasm', '-i', 'modelb_boot.asm', '-D', 'BANKED=1'], check=True)
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tools'))
+    import build_boot                       # ca65 since 2026-09-05 (beebasm
+    build_boot.build('modelb_boot', ('BANKED=1',),   # retired; byte-identical
+                     out=os.path.join(os.path.dirname(os.path.abspath(__file__)), '!BOOT'))
     BOOT = builtins.open('!BOOT', 'rb').read()
     import abi
     return [

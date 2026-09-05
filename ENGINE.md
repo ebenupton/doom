@@ -110,7 +110,7 @@ vrcache.s.
     src/abi.inc          Generated (tools/gen_abi.py): every cross-file
                          ADDRESS CONSTANT (banks, region heads, driver vars,
                          cache switches, sqr bases). Also emits
-                         abi_beeb.inc (drivers) and abi.py (harness).
+                         and abi.py (harness).
                          "Private copies of addresses are forbidden" —
                          if two files need an address, it goes here.
     src/slope_div.s      Angle unit = ordered .includes of src/ang/:
@@ -243,7 +243,7 @@ wrong rather than adding a second stale copy.
                  variant entries + pair thunk (472 B; JSR/SMC-linked only)
     $1100-$11FF  ANIM_SSMASK runtime home (2026-08-17; the copy-down moves
                  a WHOLE page, so the 35 B tail is NOT free)
-    $1F00-$2AFF  beebasm driver ($1F00, vars $2080, glue $20A0,
+    $1F00-$2AFF  driver ($1F00, vars $2080, glue $20A0,
                  clears+input+flip $2100) then the PMOVE/PMH region
                  ($2340); the framebuffer clears live in bank C
     $2B00-$57FF  CODE: MAIN first at $2B00 (MAIN_BASE); drivers take real
@@ -277,9 +277,11 @@ FB lockstep + a jsbeeb disc boot — harness green alone is not evidence
   a new MEMORY area can never be silently missing from the loaders.
 - `DOOM_CPU=65c02` selects the C02=1 build AND the matching py65 core.
 - Disc image: `build_walk_ssd.py` (the playable artifact — cursor keys;
-  bank images from build_anim_ssd.build_images, boot from modelb_boot.asm).
-  The rotating spin/modelb discs were GC'd 2026-07-12 (git history has
-  them). Boot shims use beebasm (vendored, stable); the engine does not.
+  bank images from build_anim_ssd.build_images, boot from
+  src/boot/modelb_boot.s).  The rotating spin/modelb discs were GC'd
+  2026-07-12 (git history has them).  The boot shims are ca65 sources too
+  since 2026-09-05 (src/boot/*.s, one ld65 config each under
+  src/boot/cfg/, built by tools/build_boot.py); beebasm is gone.
 
 ## Addresses: use the symbol map, never literals
 

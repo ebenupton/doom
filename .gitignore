@@ -2,7 +2,7 @@ __pycache__/
 *.pyc
 build/
 .DS_Store
-# generated build artifacts (asmbuild/beebasm outputs; disc build intermediates)
+# generated build artifacts (asmbuild/ld65 outputs; disc build intermediates)
 *.bin
 ANIMBOOT
 ANIMDRV

@@ -16,10 +16,10 @@ hostg (tube host) -- against a stubbed OSBYTE returning each documented
 version byte, and checks the base each one picks. The two probes are
 separate code in two assemblers, so both are driven here.
 """
-import os, re, subprocess, sys
+import os, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, ROOT)
+sys.path.insert(0, ROOT); sys.path.insert(0, os.path.join(ROOT, 'tools'))
 os.chdir(ROOT)
 from py65.devices.mpu6502 import MPU
 from py65.memory import ObservableMemory
@@ -45,14 +45,13 @@ CASES = ((0x00, B, 'OS 1.00'), (0x01, B, 'OS 1.20'), (0x02, B, 'OS 2 (B+)'),
 # so the gate stayed green while every real Master drew garbage.
 
 
-def assemble(src, defs, out, labels):
-    subprocess.run(['./beebasm', '-i', src] + defs + ['-d', '-labels', labels],
-                   check=True, cwd=ROOT, stdout=subprocess.DEVNULL)
-    code = open(os.path.join(ROOT, out), 'rb').read()
-    os.remove(os.path.join(ROOT, out))
-    sym = {m.group(1): int(m.group(2))
-           for m in re.finditer(r"'(\w+)':(\d+)L?", open(labels).read())}
-    return code, sym
+def assemble(name, defs, labels):
+    """ca65/ld65 since 2026-09-05 (this shelled out to beebasm before).
+    Bytes from the link, symbols from ld65's VICE label dump."""
+    import build_boot
+    out = build_boot.build(name, defs, labels=os.path.join(ROOT, labels))
+    code = open(out, 'rb').read()
+    return code, build_boot.symbols(os.path.join(ROOT, labels))
 
 
 def seed_font(mem, base):
@@ -106,7 +105,7 @@ def main():
               f'{"ok" if good else f"*** want ${want:04X} ***"}')
 
     # ---- hostg: a called routine, so run it to its RTS -------------------
-    code, sym = assemble('tube/hostg.asm', [], 'HOSTT', 'build/hostt.labels')
+    code, sym = assemble('hostg', ['BANKED=1'], 'build/hostt.labels')
     print('-- hostg (tube host) --')
     for ver, want, label in CASES:
         mpu, mem = probe(code, sym['start'], sym['hudprobe'], ver)

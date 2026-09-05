@@ -60,7 +60,12 @@ def main():
     import subprocess as _sp
     import asmbuild
     asmbuild.gen_engine_syms()              # driver entries from the ld65 map
-    _sp.run(['./beebasm', '-i', 'banked_boot.asm'], check=True)  # fresh DRV
+    import sys as _sys, os as _os                                 # fresh DRV/BOOT
+    _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'tools'))
+    import build_boot                       # ca65 since 2026-09-05
+    _p = build_boot.build('banked_boot', ('BANKED=1',))
+    for _sfx, _nm in (('.boot', 'BOOT'), ('.drv', 'DRV')):
+        open(_nm, 'wb').write(open(_p + _sfx, 'rb').read())
     DRV = open('DRV', 'rb').read()
 
     def build_and_run(zp_poison=None, ram_poison=None):
