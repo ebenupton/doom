@@ -452,32 +452,29 @@ nb_le:
 
 ; descend: id in zp_node_ch_l, N = the child's leaf bit (staged by the
 ; caller's TYPE load, +ASL for left arms — flags ride through JSR/JMP).
-; ONE leaf test per class (2026-07-16, was 4 site copies); near and far
-; stay separate entries because their is_full contracts differ (far ran
-; is_full just before its bbox check). Far owns the rc_node_nc fall-in
-; — its node path is the hottest of the four.
-rc_descend_near:
-   BMI rc_leaf                             ; near leaf: is_full + render
-   SPAN_IS_NOT_FULL
-   BNE rc_node_nc                          ; near node: the recursion
-                                        ; (inverted 2026-08-12 — the JMP
-                                        ;  trampoline died; the rare
-                                        ;  full-screen early-out falls in)
-bsp_done_full2:
-; unwind() twin: the inlined node_setup expansion below pushed the
-; original out of branch range of this cluster — 5 bytes buys locality.
-   LDX zp_bsp_stack_sp
-   TXS
-   RTS
-rc_leaf:
-; descend(subsector), near side (far leaves skip is_full — theirs ran
-; just before the far bbox check).
-   SPAN_IS_NOT_FULL
-   BEQ bsp_done_full2
+; ONE leaf test per class (2026-07-16, was 4 site copies).
+;
+; ONE ENTRY (2026-09-05): rc_descend_near is GONE and both near-child
+; sites JSR here.  It used to test is_full on the way in, and that test
+; was DEAD -- provably, not just empirically (it fired 0.00 times a frame
+; across the suite against 23.4 tests).  The near child is reached only
+; through rc_node_nc, rc_node_nc is entered only from the root seed (not
+; full by construction), from this entry's own fall-through (the far
+; site tested just before its bbox check) or from a near descent that
+; had itself just tested -- and between rc_node_nc and the near JSR the
+; only code that runs is point_on_side, the DSGN gate and a child fetch.
+; NOTHING DRAWS THERE, so zp_head cannot have changed since the last
+; test.  The old note claimed near and far "differ in their is_full
+; contracts"; they never did.
+;
+; This is r_bsp.c's own shape: R_RenderBSPNode carries no occlusion test
+; on the way down at all and prunes only at R_CheckBBox, which is where
+; our two surviving tests sit (r0_far / r1_far, 3-5% fire rate).
 rdf_leaf:
    JMP render_subsector
+
 rc_descend_far:
-   BMI rdf_leaf                            ; far leaf: straight to render
+   BMI rdf_leaf                            ; leaf: straight to render
 ; SIDE-SPECIALISED (2026-07-15): node_setup returns side in A with Z
 ; live (every exit is LDA #imm / RTS), so ONE dispatch selects a
 ; right-then-left or left-then-right body with the child fetches
@@ -514,7 +511,7 @@ r0_vis:
    LDA NODE_CRLO,X                         ; inline RIGHT fetch
    STA zp_node_ch_l
    LDA NODE_TYPE,X                         ; N = NF_RLEAF
-   JSR rc_descend_near
+   JSR rc_descend_far
 r0_far:
    PLA
    TAX                                     ; id for the ADESC gate
@@ -577,7 +574,7 @@ r1_vis:
    STA zp_node_ch_l
    LDA NODE_TYPE,X
    ASL A                                   ; N = NF_LLEAF
-   JSR rc_descend_near
+   JSR rc_descend_far
 r1_far:
    PLA
    TAX                                     ; id for the ADESC gate
