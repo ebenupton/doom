@@ -125,7 +125,9 @@ obj_gtab:                                  ; projected-height growth in
 .pushseg
 .segment "VPTAB"
 obj_lodh:
-   .byte 33, $FF, $FF, 7, 24, 12, 24       ; potion SINGLE-TIER + helmet/
+   .byte 33, $FF, 8, 7, 24, 12, 24         ; potion two-tier again 2026-09-05
+                                           ; (H >= 8 -> the dodecagon; below
+                                           ; it the octagon).  helmet/
                                            ; vest re-tiered 2026-09-02;
                                            ; helmet 24 -> 7 (2026-09-04,
                                            ; Eben: the hoplite's switch
@@ -135,15 +137,16 @@ obj_lodh:
 obj_tpl_pg2:                               ; art window high byte, lo/hi tier
    .byte >OBJ_ART,        >(OBJ_ART+$200)  ; hex / OCT
    .byte >OBJ_ART,        >OBJ_ART         ; lamp
-   .byte >(OBJ_ART+$200), >(OBJ_ART+$200)  ; potion: the dodecagon, ONLY
+   .byte >(OBJ_ART+$100), >(OBJ_ART+$200)  ; potion: octagon far / dodeca near
    .byte >(OBJ_ART+$200), >OBJ_ART         ; helmet: L1 far / hoplite near
-   .byte >(OBJ_ART+$100), >(OBJ_ART+$200)  ; box-stim / trapezoid+cross
-   .byte >(OBJ_ART+$100), >(OBJ_ART+$200)  ; box-medikit
+   .byte >OBJ_ART,        >(OBJ_ART+$200)  ; box-stim / trapezoid+cross
+   .byte >OBJ_ART,        >(OBJ_ART+$200)  ; box-medikit (both boxes' far
+                                           ; tier moved to window A 2026-09-05)
    .byte >(OBJ_ART+$100), >(OBJ_ART+$100)  ; vest: L1 far / L0 near
 obj_tpl_off2:                              ; start offset within the window
    .byte OBJ_ART_HEX,    OBJ_ART_OCT
    .byte OBJ_ART_LAMP,   OBJ_ART_LAMP
-   .byte OBJ_ART_POTL0,  OBJ_ART_POTL0
+   .byte OBJ_ART_POTOCT, OBJ_ART_POTL0
    .byte OBJ_ART_HELM_L1, OBJ_ART_HELM_L0
    .byte OBJ_ART_BOX,    OBJ_ART_BOXL0
    .byte OBJ_ART_BOX,    OBJ_ART_BOXL0

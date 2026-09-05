@@ -135,9 +135,15 @@ OBJ_K_VEST   = 6
 OBJ_ART_HEX    = 0                 ; window A
 OBJ_ART_LAMP   = 52                ; window A
 OBJ_ART_HELM_L0 = 140              ; window A -- the hoplite (2026-09-02)
-OBJ_ART_BOX    = 0                 ; window B
-OBJ_ART_VEST_L0 = 28               ; window B -- doubled outline + neck loop
-OBJ_ART_VEST   = 156               ; window B -- L1: old outline + neck loop
+OBJ_ART_BOX    = 228               ; window A -- moved from window B's head
+                                   ;   2026-09-05: its 28 B were exactly A's
+                                   ;   slack, freeing a contiguous 52 B at the
+                                   ;   end of B for the potion's far tier
+OBJ_ART_VEST_L0 = 0                ; window B -- doubled outline + neck loop
+OBJ_ART_VEST   = 128               ; window B -- L1: old outline + neck loop
+OBJ_ART_POTOCT = 204               ; window B -- the potion's FAR tier: the
+                                   ;   dodecagon minus its four diagonal
+                                   ;   vertices, same circle, same neck
 OBJ_ART_OCT    = 0                 ; window C -- barrel, close range
 OBJ_ART_BOXL0  = 76                ; window C -- trapezoid + cross
 OBJ_ART_POTL0  = 160               ; window C -- dodecagon + wide stem (the

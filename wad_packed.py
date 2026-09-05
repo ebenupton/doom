@@ -619,7 +619,26 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     obj_art += [44, 2, 10, 4]
     obj_art += _CTL(OBJ_ART_END)
     assert off_art_helm_l0 == 140, f'OBJ_ART_HELM_L0 drifted: {off_art_helm_l0}'
-    # WINDOW A ends here (HEX + LAMP + HELM_L0 = 228 B): pad to 256.
+    #
+    # BOX (stimpack AND medikit -- one template, two kinds: the lid
+    # fraction is the only difference and it lives in the LADDER, not
+    # here).  Eben's L1: the rectangle with its lid line, 5 lines.
+    #   x offs: 0 = cx-a, 10 = cx+a (the prologue's slots, probe-aligned)
+    #   y offs: 0 = syt, 2 = lid, 4 = syb
+    off_art_box = len(obj_art)
+    obj_art += [0, 2, 10, 2]                    # the lid line
+    obj_art += [0, 0, 0, 4]                     # left side
+    obj_art += [10, 0, 10, 4]                   # right side
+    obj_art += [0, 4, 10, 4]                    # bottom
+    obj_art += _CTL(OBJ_ART_ARM)
+    obj_art += [0, 0, 10, 0]                    # top edge: the authority
+    obj_art += _CTL(OBJ_ART_END)
+    assert off_art_box == 228, f'OBJ_ART_BOX drifted: {off_art_box}'
+
+    # WINDOW A IS EXACTLY FULL (HEX 52 + LAMP 88 + HELM_L0 88 + BOX 28 =
+    # 256).  The box moved here from window B's head on 2026-09-05: its 28 B
+    # were precisely window A's slack, which freed a CONTIGUOUS 52 B at the
+    # end of window B for the potion's far tier.  Nothing else shifted.
     # The template walker's four reads are abs,X off a window base whose
     # HIGH BYTE is the per-object SMC patch -- offsets stay bytes, and a
     # window must never exceed 256 B.
@@ -640,24 +659,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # -- THE PICKUP TEMPLATES (2026-08-31) -- geometry doc/billboard's,
     # ladder slots built by the obj_*_xy routines in objects.s.  All four
     # fit ONE window (228 B) now the pillar is gone -- two windows total.
-    #
-    # BOX (stimpack AND medikit -- one template, two kinds: the lid
-    # fraction is the only difference and it lives in the LADDER, not
-    # here).  Eben's L1: the rectangle with its lid line, 5 lines.
-    #   x offs: 0 = cx-a, 10 = cx+a (the prologue's slots, probe-aligned)
-    #   y offs: 0 = syt, 2 = lid, 4 = syb
-    off_art_box = len(obj_art)
-    obj_art += [0, 2, 10, 2]                    # the lid line
-    obj_art += [0, 0, 0, 4]                     # left side
-    obj_art += [10, 0, 10, 4]                   # right side
-    obj_art += [0, 4, 10, 4]                    # bottom
-    obj_art += _CTL(OBJ_ART_ARM)
-    obj_art += [0, 0, 10, 0]                    # top edge: the authority
-    obj_art += _CTL(OBJ_ART_END)
-    assert off_art_box == 256, f'OBJ_ART_BOX drifted: {off_art_box} (window B head)'
-
-    # POTION L1 IS DEAD (Eben 2026-09-02: "disable L1 for potions") --
-    # the dodecagon (window C) draws at every size; obj_lodh carries $FF.
+    # (window B head is the vest now -- the box moved to window A.)
     #
     # VEST L0 -- the DOUBLED outline (Eben 2026-09-02): every run split
     # through a nudged midpoint (hem ends lift, waist and armpit bow
@@ -708,7 +710,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     obj_art += [48, 4, 60, 2]                   # cx+so -> cx+c
     obj_art += [60, 2, 10, 6]                   # cx+c -> cx+a
     obj_art += _CTL(OBJ_ART_END)
-    assert off_art_vest_l0 == 284, f'OBJ_ART_VEST_L0 drifted: {off_art_vest_l0}'
+    assert off_art_vest_l0 == 256, f'OBJ_ART_VEST_L0 drifted: {off_art_vest_l0}'
 
     # VEST L1 -- the old L0 outline (armpit flare + rounded corner kept)
     # plus the same neck loop, straight rims.
@@ -733,7 +735,36 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     obj_art += [6, 0, 48, 0]                    # R shoulder (scoop -> cx+so)
     obj_art += [48, 0, 10, 6]                   # R corner: cx+so -> cx+a
     obj_art += _CTL(OBJ_ART_END)
-    assert off_art_vest == 412, f'OBJ_ART_VEST drifted: {off_art_vest}'
+    assert off_art_vest == 384, f'OBJ_ART_VEST drifted: {off_art_vest}'
+    # -- POTION FAR TIER, THE OCTAGON (Eben 2026-09-05) -------------------
+    # "an octagon in place of the dodecagon, otherwise identical (same
+    # radius, same neck)".  It IS the dodecagon with its four DIAGONAL
+    # vertices (+-qa, +-qa) dropped: the remaining eight, (+-a, +-a3a) and
+    # (+-a3a, +-a), sit on the same circle, so the radius is unchanged and
+    # the neck opening -- the flat top between +-a3a at cy-a -- is the
+    # same one the dodecagon opens.  That is what makes it free: NO new
+    # ladder magnitude, the existing a / qa / a3a slots serve both tiers,
+    # where a regular 22.5-degree octagon would need two more multiplies
+    # on every potion draw including the near ones.
+    #   x offs: 0=-a 2=-qa 4=-a3a 6=+a3a 8=+qa 10=+a   (qa unused here)
+    #   y offs: 0=syt 2=cy-a 4=cy-qa 6=cy-a3a 8=cy+a3a 10=cy+qa 12=syb
+    off_art_potoct = len(obj_art)
+    obj_art += [0, 8, 4, 12]                    # lower arc: -a -> -a3a
+    obj_art += [4, 12, 6, 12]                   #   the flat base
+    obj_art += [6, 12, 10, 8]                   #   +a3a -> +a
+    obj_art += [0, 6, 0, 8]                     # sides
+    obj_art += [10, 6, 10, 8]
+    obj_art += [4, 0, 4, 2]                     # stem sides
+    obj_art += [6, 0, 6, 2]
+    obj_art += _CTL(OBJ_ART_ARM)
+    # MONOTONIC L-to-R authority, as POTL0: left shoulder, the stem top
+    # across the neck, right shoulder -- one ascending column sweep.
+    obj_art += [0, 6, 4, 2]                     # -a -> -a3a
+    obj_art += [4, 0, 6, 0]                     # stem top across the neck
+    obj_art += [6, 2, 10, 6]                    # +a3a -> +a
+    obj_art += _CTL(OBJ_ART_END)
+    assert off_art_potoct == 460, f'OBJ_ART_POTOCT drifted: {off_art_potoct}'
+
     obj_art += [0xFF] * (512 - len(obj_art))    # window B done
 
     # -- WINDOW C: THE CLOSE-RANGE TIERS (2026-08-31, "all objects appear
@@ -1414,6 +1445,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         'off_lv1': off_lv1, 'n_lv1': len(_lv1_ids),
         'off_obj': off_obj, 'n_obj': n_obj,
         'off_obj_bits': off_obj_bits, 'obj_bits_len': obj_bits_len,
+        'off_art_potoct': off_art_potoct,
         'off_obj_art': off_obj_art, 'n_obj_art': n_obj_art, 'art_len': art_len,
         'off_bpal': off_bpal, 'n_bpal': len(_bpal_ids),
         'off_bktlo': off_bktlo, 'off_bkthi': off_bkthi,
