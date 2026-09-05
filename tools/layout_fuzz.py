@@ -20,7 +20,7 @@ own right.
 Runs in a scratch git worktree; the working tree is never touched.
 Usage:  layout_fuzz.py [zp|banked|both] [--iters N] [--seed S] [--keep]
 """
-import os, sys, re, json, random, hashlib, subprocess, argparse, shutil
+import os, sys, re, json, random, hashlib, subprocess, argparse, shutil, collections
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 POSES = [(1056, -3616, 1), (1056, -3616, 65), (1024, -3500, 65), (1500, -3700, 1),
@@ -106,6 +106,17 @@ def zp_entries(text):
 def zp_name(entry):
     m = re.match(r'^(\w+):', entry[0])
     return m.group(1) if m else '(pad)'
+
+
+def zp_size(entry):
+    """Bytes an entry reserves.  The sweep must swap LIKE FOR LIKE: pairing
+    a 26-byte block with a 1-byte pad displaces 25 bytes of neighbours and
+    can push the block past $FF, which fails the build for a SIZE reason
+    and reads as a false 'this symbol cares where it lives'.  That is why
+    zp_br_vz / zp_prod_h / zp_tmp0 / VX1 / RASTER_ZP_SCRSTRT came back
+    flagged on the first run (2026-09-04) and were never resolved."""
+    m = re.search(r'\.res\s+(\d+)', entry[0])
+    return int(m.group(1)) if m else 1
 
 
 def zp_apply(text, order):
@@ -256,16 +267,34 @@ def sweep_zp(wt, zp_src, base, log, group=8):
     _, _, _, entries = zp_entries(zp_src)
     n = len(entries)
     named = [i for i in range(n) if zp_name(entries[i]) != '(pad)']
-    pads = [i for i in range(n) if zp_name(entries[i]) == '(pad)']
-    log(f'  sweep: {len(named)} named entries, {len(pads)} pads to swap against')
-    if not pads:
-        log('  no pads to probe with'); return []
+    # SIZE-PRESERVING PROBE: each partner must reserve the same number of
+    # bytes, so the swap moves two things and displaces nothing else.
+    # Pads first (swapping one moves exactly ONE named symbol); where no
+    # pad of that size exists, another NAMED entry of the same size serves
+    # -- a failure then implicates one of two, which the bisect resolves.
+    bysize = collections.defaultdict(list)
+    for i in range(n):
+        bysize[zp_size(entries[i])].append(i)
+    def partner(i):
+        cand = [j for j in bysize[zp_size(entries[i])] if j != i]
+        p = [j for j in cand if zp_name(entries[j]) == '(pad)']
+        return (p or cand or [None])[0]
+    unprobed = [zp_name(entries[i]) for i in named if partner(i) is None]
+    named = [i for i in named if partner(i) is not None]
+    log(f'  sweep: {len(named)} named entries probed size-for-size'
+        + (f'; {len(unprobed)} have no same-size partner: '
+           f'{", ".join(unprobed)}' if unprobed else ''))
+    if not named:
+        log('  nothing to probe'); return []
 
     def test(group_idx):
         order = list(range(n))
-        for k, i in enumerate(group_idx):
-            j = pads[k % len(pads)]
-            if i == j: continue
+        used = set()
+        for i in group_idx:
+            j = partner(i)
+            if j is None or i in used or j in used:
+                continue
+            used.add(i); used.add(j)
             order[i], order[j] = order[j], order[i]
         open(os.path.join(wt, 'src/zp.inc'), 'w').write(zp_apply(zp_src, order))
         ok, err = build(wt)
