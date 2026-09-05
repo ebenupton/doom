@@ -196,6 +196,7 @@
 .globalzp zp_ox0
 .globalzp zp_ox1
 .globalzp RASTER_ZP_SCRSTRT
+.globalzp RASTER_ZP_CNT, RASTER_ZP_DX
 .globalzp zp_seg_v_idx_l
 .globalzp zp_seg_v_idx_b
 .globalzp zp_vf_vec0
@@ -480,7 +481,11 @@ zp_rws_l:                   .res 1 ; [bsp]; rotate 3-byte sum workspace lo
 zp_rws_m:                   .res 1 ; [bsp]; rotate 3-byte sum workspace mid
 zp_seg_v_idx_l:             .res 1 ; [bsp]; cached: vertex index (u16)
 zp_seg_v_idx_b:             .res 1 ; [bsp]; B = idx>>3 (bitmap/VRCACHE byte
-   .res 2                               ; FREE $79-$7A
+RASTER_ZP_CNT:              .res 2 ; [raster] cnt + errs.  NAMED 2026-09-05:
+                                   ; the rasteriser scratched these two bytes
+                                   ; as literals while zp.inc called them FREE
+                                   ; -- the same by-luck agreement RASTER_ZP_X0
+                                   ; had.  Same addresses, now allocated.
 zp_vf_vec0:                 .res 2 ; [bsp]; VRCACHE fetch vector, junior side â€”
                                   ; vrcache_frame aims it at sxv0_vfoff (off)
                                   ; or sxv0_vrcache_on (on); bca VECTORED idiom.
@@ -492,7 +497,7 @@ zp_vf_vec0:                 .res 2 ; [bsp]; VRCACHE fetch vector, junior side â€
                                   ; disjoint.
 zp_vf_vec1:                 .res 2 ; [bsp]; senior-side twin ($7D/$7E)
 obj_ctr_l:                 .res 1 ; ROTATED IN (zprotate): 17.9 vs zp_br_py2_l's 14.6
-   .res 2                               ; FREE $80-$81
+RASTER_ZP_DX:               .res 2 ; [raster] dx + dy (see RASTER_ZP_CNT)
 RASTER_ZP_X0:               .res 1 ; [clip]
 RASTER_ZP_Y0:               .res 1 ; [clip]
 RASTER_ZP_X1:               .res 1 ; [clip]

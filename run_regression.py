@@ -120,10 +120,6 @@ run('pm_fuzz', ['tools/pm_fuzz.py'],
 # The banked (non-copro) HUD has the same font search. The MOS font is not
 # at a fixed address -- OS 1.2 $C000, MOS 3.20 $F900 -- and hardwiring
 # $C000 is what corrupted the readout on a Master.
-# The NJ blob is a separate link unit that names its zero page as
-# LITERALS while the engine lets ld65 allocate RASTER_ZP_*; they agreed
-# only by luck until this gate (2026-09-05, found by layout_fuzz --sweep).
-run('raster_zp', ['tools/test_raster_zp.py'], lambda o: 'RASTERZP: PASS' in o)
 run('hud_font', ['tools/test_hud_font.py'], lambda o: 'HUDFONT: PASS' in o)
 run('hud_draw', ['tools/test_hud_draw.py'], lambda o: 'HUDDRAW: PASS' in o)
 # ^ the parasite shares the flat image but carries its OWN map glue

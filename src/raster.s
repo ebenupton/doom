@@ -24,29 +24,31 @@
 
 .segment "RASTER"
 
-; ZP interface.  These MUST equal the engine's own reservations; the
-; asserts below are the whole point of being in the same link.
-scr = $74
-scrstrt = $70
-cnt = $79
-err = $76
-errs = $7A
-dx = $80
-dy = $81
-x0 = $82
-y0 = $83
-x1 = $84
-y1 = $85
-ls = $86
-b = $87
-
+; ZP interface -- NOTHING PINNED (2026-09-05).  These were thirteen
+; literals mirroring reservations ld65 allocates; they are the
+; reservations now, so the zero page floats and the rasteriser follows it.
 .importzp RASTER_ZP_SCRSTRT, RASTER_ZP_X0, RASTER_ZP_Y0
-.importzp RASTER_ZP_X1, RASTER_ZP_Y1
-.assert scrstrt = RASTER_ZP_SCRSTRT, error, "raster scrstrt != zp.inc"
-.assert x0 = RASTER_ZP_X0, error, "raster x0 != zp.inc"
-.assert y0 = RASTER_ZP_Y0, error, "raster y0 != zp.inc"
-.assert x1 = RASTER_ZP_X1, error, "raster x1 != zp.inc"
-.assert y1 = RASTER_ZP_Y1, error, "raster y1 != zp.inc"
+.importzp RASTER_ZP_X1, RASTER_ZP_Y1, RASTER_ZP_CNT, RASTER_ZP_DX
+.importzp zp_rc2_h, zp_rws_m, bca_boxp
+
+scrstrt = RASTER_ZP_SCRSTRT
+x0 = RASTER_ZP_X0
+y0 = RASTER_ZP_Y0
+x1 = RASTER_ZP_X1
+y1 = RASTER_ZP_Y1
+cnt = RASTER_ZP_CNT
+errs = RASTER_ZP_CNT+1
+dx = RASTER_ZP_DX
+dy = RASTER_ZP_DX+1
+
+; The remaining four are DELIBERATELY SHARED with engine variables that
+; are phase-disjoint from a draw -- zp.inc's "nothing may live here across
+; draws".  Aliasing them says so in code instead of leaving two matching
+; literals in different files to be kept in step by hand.
+scr = zp_rc2_h
+err = zp_rws_m
+ls = bca_boxp
+b = bca_boxp+1
 
 ; Feature flags:
 ;   HAMILTONIAN_12  specialised shallow core for the 1:2..1:1 slope band ON
