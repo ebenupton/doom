@@ -74,31 +74,16 @@ def build_floor_grid():
 
 def _emit_variant_images():
     """Subprocess worker (--variant): build THIS process's DOOM_CPU
-    variant end-to-end — engine link, engine_syms (symbol addresses
-    DRIFT between the NMOS and C02 links, so WALKDRV must be
-    re-assembled against each variant's map), driver, bank images —
-    and write them to build/walk_{L0,C,L2,LOW}.bin for the parent."""
+    variant end-to-end — the engine link (ONE program since 2026-09-05:
+    driver + engine in one MAIN region, one engine_bk.bin) and the bank
+    images — and write them to build/walk_{L0,C,L2,LOW}.bin for the
+    parent."""
     import asmbuild
     c02 = 1 if os.environ.get('DOOM_CPU', '').lower() in ('65c02', 'c02', '1') else 0
     asmbuild.build_all(banked=1, c02=c02)
-    # The driver is a ca65 LINK UNIT now (2026-08-30) -- no beebasm pass and
-    # no generated engine_syms.inc.  It used to be assembled separately
-    # against addresses scraped out of the ld65 map, which meant a moved
-    # engine entry produced a stale literal instead of an error; it imports
-    # the entries by name now, so the linker checks them.
-    open('WALKDRV', 'wb').write(open('engine_drv.bin', 'rb').read())
-    orig = builtins.open
-    def swap(path, *a, **k):
-        if path == 'ANIMDRV':
-            path = 'WALKDRV'
-        return orig(path, *a, **k)
-    builtins.open = swap
-    try:
-        L0, C, L2, LOW = anim.build_images()
-    finally:
-        builtins.open = orig
+    L0, C, L2, LOW = anim.build_images()
     for name, data in (('L0', L0), ('C', C), ('L2', L2), ('LOW', LOW)):
-        with orig(f'build/walk_{name}.bin', 'wb') as f:
+        with builtins.open(f'build/walk_{name}.bin', 'wb') as f:
             f.write(data)
     import abi
 
@@ -138,8 +123,7 @@ def banked_files():
     # doom_wireframe's layout.inc check on import)
     build_floor_grid()
     L0c, Cc, L2c, LOWc = _banked_variant(c02=1)      # C02 first: leave the
-    L0, C, L2, LOW = _banked_variant(c02=0)          # NMOS artifacts (WALKDRV,
-                                                     # engine_syms) as the
+    L0, C, L2, LOW = _banked_variant(c02=0)          # NMOS link left as the
                                                      # repo's resting state
     assert L0c == L0 and L2c == L2, \
         'L0/L2 bank images differ between CPU variants — they ship ONCE for ' \

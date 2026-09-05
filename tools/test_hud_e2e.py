@@ -16,9 +16,8 @@ def run(osver, c02):
     if c02: os.environ['DOOM_CPU']='65c02'
     else: os.environ.pop('DOOM_CPU', None)
     asmbuild.build_all(banked=1, c02=c02)
-    # walk_drv is a ca65 link unit since 749ba62: the driver bytes come from
-    # the link, not a beebasm pass against a generated engine_syms.inc.
-    DRV=open('engine_drv.bin','rb').read()
+    # ONE PROGRAM (2026-09-05): the driver heads the engine's MAIN region,
+    # so LOW below already carries it -- no separate image to overlay.
     src=BankedBspRender(dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,
                         dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
     L0=bytes(src.bm._banks[BANK_L0]); C=bytes(src.bm._banks[BANK_C]); L2=bytes(src.bm._banks[BANK_L2])
@@ -32,7 +31,6 @@ def run(osver, c02):
     bare=BankedMemory([0]*65536)
     bare.define_bank(BANK_L0,L0); bare.define_bank(BANK_C,C); bare.define_bank(BANK_L2,L2)
     for i,b in enumerate(LOW): bare[abi.LOW_BASE+i]=b
-    for i,b in enumerate(DRV): bare[abi.DRV_ORG+i]=b
     bare.select(BANK_L0)
     bare[0xFFF4]=0xA2; bare[0xFFF5]=osver; bare[0xFFF6]=0x60      # OSBYTE stub
     # Model B: font in the MOS ROM at $C000. Master: the font is in ANDY

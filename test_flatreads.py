@@ -46,7 +46,11 @@ def main():
                           dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
     L0,C,L2 = (bytes(src.bm._banks[b]) for b in (BANK_L0,BANK_C,BANK_L2))
     # LOW as the disc loads it (base = abi LOW_BASE)
-    LOW = bytes(src.bm[abi.LOW_BASE:abi.MAIN_BASE+os.path.getsize('bsp_render_bk.bin')])
+    LOW = bytes(src.bm[abi.LOW_BASE:0x5800])   # THE FRAMEBUFFER WALL: LOW
+    # ships $0F00-$57FF and nothing above it (build_anim_ssd cuts the disc
+    # image at the same wall).  The old MAIN_BASE + getsize(
+    # 'bsp_render_bk.bin') proxy named a file this build no longer writes
+    # -- the driver and the engine are ONE region now.
     sc = SpanClip6502()
     bare = LogMem([0]*65536)
     for n,img in [(BANK_L0,L0),(BANK_C,C),(BANK_L2,L2)]: bare.define_bank(n,img)

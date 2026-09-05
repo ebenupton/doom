@@ -56,7 +56,11 @@ def main():
     C  = bytes(src.bm._banks[BANK_C])
     L2 = bytes(src.bm._banks[BANK_L2])
     import os as _os
-    LOW = bytes(src.bm[abi.LOW_BASE:abi.MAIN_BASE + _os.path.getsize('bsp_render_bk.bin')])  # LOW base = strip head (abi)
+    LOW = bytes(src.bm[abi.LOW_BASE:0x5800])   # THE FRAMEBUFFER WALL: LOW
+    # ships $0F00-$57FF and nothing above it (build_anim_ssd cuts the disc
+    # image at the same wall).  The old MAIN_BASE + getsize(
+    # 'bsp_render_bk.bin') proxy named a file this build no longer writes
+    # -- the driver and the engine are ONE region now.
     import subprocess as _sp
     import asmbuild
     asmbuild.gen_engine_syms()              # driver entries from the ld65 map

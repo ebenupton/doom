@@ -52,16 +52,12 @@ def build_images():
                        # proxy drifted with bsp_render_bk.bin and sprayed
                        # file tail over the top FB rows (the 2026-09-01
                        # jsbeeb top-line -> full-breakage arc)
+    # ONE PROGRAM (2026-09-05): the driver is the head of the engine's
+    # MAIN region, so it is already in bm -- loaded from engine_bk.bin by
+    # engine_load's cfg-driven region loop like every other slice.  The
+    # ANIMDRV/WALKDRV overlay (and the driver-vs-PMOVE assert, which ld65
+    # now makes for us: PMOVE is pinned at $1340 in the cfg) is gone.
     low = bytearray(bm[abi.LOW_BASE:low_end])  # LOW base = the strip head (abi)
-    def overlay(addr, data):
-        off = addr - abi.LOW_BASE
-        low[off:off+len(data)] = data
-    drv = open('ANIMDRV', 'rb').read()
-    # the engine's PMOVE slice owns $2600-$2BFF (already in the bm slice):
-    # a driver that grows past $2600 would overlay-shred it
-    assert DRV_ADDR + len(drv) <= abi.PMOVE_BASE, \
-        f'driver {len(drv)}B reaches the PMOVE region at {abi.PMOVE_BASE:#x}'
-    overlay(DRV_ADDR, drv)
     # (sincos overlay retired 2026-08-14: the table lives in bank A $BA00
     # with STEPTAB/USEVEC — banked_bsp seeds them into the la image)
     return L0, C, L2, bytes(low)

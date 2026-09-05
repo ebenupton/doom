@@ -18,7 +18,17 @@ _ROOT = asmbuild._ROOT
 def _regions(banked=0):
     """Parse MEMORY areas from the engine ld65 config: [(start, file)]."""
     cfg = open(os.path.join(_ROOT, asmbuild._CFGS[banked])).read()
-    mem = cfg[cfg.index('MEMORY'):cfg.index('SEGMENTS')]
+    # BRACE-MATCHED, not cfg.index('SEGMENTS') (2026-09-05): the word
+    # SEGMENTS inside a MEMORY comment truncated the block and silently
+    # dropped every area declared after it -- the engine simply was not
+    # loaded, and every gate died on a BRK at $0000.
+    i = cfg.index('MEMORY')
+    j = cfg.index('{', i) + 1
+    depth = 1
+    while depth:
+        depth += 1 if cfg[j] == '{' else -1 if cfg[j] == '}' else 0
+        j += 1
+    mem = cfg[i:j]
     out = []
     for m in re.finditer(r'start\s*=\s*\$([0-9A-Fa-f]+)[^;]*?file\s*=\s*"([^"]+)"', mem):
         out.append((int(m.group(1), 16), m.group(2)))

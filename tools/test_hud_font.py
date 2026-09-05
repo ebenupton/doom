@@ -93,7 +93,7 @@ def main():
     # conversion, so it broke the moment walk_drv.asm was retired.)
     import asmbuild, symmap
     asmbuild.build('engine', banked=1)
-    code = open(os.path.join(ROOT, 'engine_drv.bin'), 'rb').read()
+    code = open(os.path.join(ROOT, 'engine_bk.bin'), 'rb').read()  # driver heads MAIN
     sym = {'drv': symmap.sym('drv', banked=1)}
     print('-- walk_drv (host) --')
     for ver, want, label in CASES:
