@@ -36,6 +36,10 @@ x0 = RASTER_ZP_X0
 y0 = RASTER_ZP_Y0
 x1 = RASTER_ZP_X1
 y1 = RASTER_ZP_Y1
+; x1/y1 double as the direction-dispatch vector: the four `JMP (x1)`
+; sites read y1 as the high byte.  zp.inc reserves them as one block;
+; this is the check at the place that depends on it.
+.assert y1 = x1+1, lderror, "RASTER_ZP_Y1 must be RASTER_ZP_X1+1 -- JMP (x1)"
 cnt = RASTER_ZP_CNT
 errs = RASTER_ZP_CNT+1
 dx = RASTER_ZP_DX

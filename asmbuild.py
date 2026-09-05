@@ -52,6 +52,34 @@ def _run(argv):
     return r.stdout + r.stderr
 
 
+def _srcstamp():
+    """Fingerprint of everything the engine link reads.
+
+    THE MARKER WAS A VARIANT TAG ONLY (fixed 2026-09-05): it named which
+    of the four builds sat on disk and nothing else, so an edited source
+    with the same variant on disk skipped the relink entirely and the
+    caller measured, gated or asserted against the PREVIOUS binary.  It
+    stayed hidden because run_regression and layout_fuzz both alternate
+    flat/banked, and the alternation mismatches the tag every time.  A
+    single-variant loop -- build banked, edit, build banked -- did not.
+    """
+    import hashlib
+    h = hashlib.sha1()
+    roots = [os.path.join(_ROOT, 'src')]
+    files = []
+    for r in roots:
+        for dp, _dn, fn in os.walk(r):
+            files += [os.path.join(dp, f) for f in fn
+                      if f.endswith(('.s', '.inc', '.cfg', '.asm'))]
+    for f in sorted(files):
+        try:
+            st = os.stat(f)
+        except OSError:
+            continue
+        h.update(f'{f}:{st.st_mtime_ns}:{st.st_size}|'.encode())
+    return h.hexdigest()[:16]
+
+
 def build(asm, banked=0, c02=None, out=None, force=False):
     """Build one engine module. Raises RuntimeError on any tool error.
 
@@ -87,7 +115,8 @@ def build(asm, banked=0, c02=None, out=None, force=False):
         _disk = open(_marker).read()
     except OSError:
         _disk = ''
-    if key in _built and _disk == f'{banked},{c02},{defs}' and not force:
+    _stamp = _srcstamp()
+    if key in _built and _disk == f'{banked},{c02},{defs},{_stamp}' and not force:
         return ''
     # refuse to build with unallocated ZP declarations (name = ?) pending —
     # run tools/zpcheck.py --alloc to assign them
@@ -110,14 +139,15 @@ def build(asm, banked=0, c02=None, out=None, force=False):
             _disk = open(_marker).read()
         except OSError:
             _disk = ''
-        if _disk == f'{banked},{c02},{defs}' and not force:
+        if _disk == f'{banked},{c02},{defs},{_stamp}' and not force:
             _built.add(key)
             _on_disk[banked] = c02
             return ''
-        return _build_locked(asm, banked, c02, defs, dflags, key, objdir, _marker)
+        return _build_locked(asm, banked, c02, defs, dflags, key, objdir,
+                             _marker, _stamp)
 
 
-def _build_locked(asm, banked, c02, defs, dflags, key, objdir, _marker):
+def _build_locked(asm, banked, c02, defs, dflags, key, objdir, _marker, _stamp):
     text = ''
     objs = []
     for src in _SOURCES:
@@ -133,7 +163,7 @@ def _build_locked(asm, banked, c02, defs, dflags, key, objdir, _marker):
     _built.add(key)
     _on_disk[banked] = c02
     with open(_marker, 'w') as _mf:
-        _mf.write(f'{banked},{c02},{defs}')
+        _mf.write(f'{banked},{c02},{defs},{_stamp}')
     return text
 
 

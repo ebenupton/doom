@@ -513,8 +513,16 @@ obj_ctr_l:                 .res 1 ; ROTATED IN (zprotate): 17.9 vs zp_br_py2_l's
 RASTER_ZP_DX:               .res 2 ; [raster] dx + dy (see RASTER_ZP_CNT)
 RASTER_ZP_X0:               .res 1 ; [clip]
 RASTER_ZP_Y0:               .res 1 ; [clip]
-RASTER_ZP_X1:               .res 1 ; [clip]
-RASTER_ZP_Y1:               .res 1 ; [clip]
+RASTER_ZP_X1:               .res 2 ; [clip] x1 AND y1 -- ONE reservation
+                                   ; (2026-09-05): when the rasteriser has
+                                   ; finished with the endpoints it REUSES
+                                   ; the pair as its direction-dispatch
+                                   ; vector -- four `JMP (x1)` sites in
+                                   ; nj-linedraw4-or.s -- so y1 must be
+                                   ; x1+1.  As two entries the linker was
+                                   ; free to separate them; layout_fuzz did,
+                                   ; and the frame jumped to $5FB7.
+RASTER_ZP_Y1 = RASTER_ZP_X1+1
 bca_boxp:                   .res 2 ; [ang]; ROM box pointer: caller points this at the 8-byte box
    .res 1                               ; FREE $88-$88
 zp_cr_vx_l:                 .res 4 ; [bsp]; clipped total vx/vy (s16 counts) — ONE block: lo.s indexes it
