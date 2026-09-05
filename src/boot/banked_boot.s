@@ -168,7 +168,7 @@ zpclr:
     STA $0D00
     STA $0D02   ; PM_FXW x/y = 0 (WORK arena +$200, 2026-09-01)
     LDA #$80
-    STA BCA_AB   ; view angle byte
+    STA ENG_BCA_AB   ; view angle byte (generated from the map)
 ; (ROM pointers retired 2026-07-10: layout.inc constants)
     LDA #$58
     STA $70   ; rasteriser scrstrt hi

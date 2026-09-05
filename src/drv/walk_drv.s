@@ -67,6 +67,8 @@ RAWY_MAX = $0490        ;  1168
                                         ; module's, dead between frames, and
                                         ; DECLARED as a pair so the two bytes
                                         ; stay adjacent under any zp layout
+.importzp bca_ab                      ; view angle byte (zp.inc names it
+                                      ; since 2026-09-05; was abi BCA_AB)
 .importzp zp_br_px_h
 .importzp zp_br_py_h
 .importzp zp_br_px_x
@@ -442,7 +444,7 @@ frame:
     STA zp_br_cone
     INY
     LDA (pa_ptr),Y
-    STA BCA_AB   ; view angle byte
+    STA bca_ab   ; view angle byte (zp.inc symbol: the driver is in the link)
     JSR anim_glue_tick                              ; advance movers (lazy patch)
     ; --- render into hidden buffer (cleared by previous flip_sched) ---
     LDA backhi

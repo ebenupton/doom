@@ -124,7 +124,7 @@ pa_sign:
 ; (BCA_WS RETIRED 2026-07-26: the bca_top/bot/left/right val[] slots
 ; were engine-dead — the classify reads the BBP corner planes; only
 ; stale harness pokes wrote them — and bca_ab moved to ZP $64
-; (zp.inc; the generated BCA_AB constant carries it to the drivers).
+; (zp.inc names it; engine_syms.inc carries it to the boot stubs).
 ; px/py stay aliased to the live renderer's player-int ZP.)
 ; Outputs + hottest body vars now in ZERO PAGE (2026-07-08: measured
 ; ~3,650 absolute accesses/frame across these slots — the ZP move is a

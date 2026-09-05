@@ -83,9 +83,9 @@ VRCACHE_YLO  = VRCACHE_BASE + $400
 VRCACHE_YHI  = VRCACHE_BASE + $600
 .assert VRCACHE_YHI + $200 <= BANKA_ORG + $2B00, error, "VRCACHE must fit below the vertex planes"
 
-; the frame angle byte: abi.inc's BCA_AB (the old private vrcache_ab copy
+; the frame angle byte: zp.inc's bca_ab (the old private vrcache_ab copy
 ; shipped the 2026-07-10 broken-turn disc)
-vrcache_ab = BCA_AB
+vrcache_ab = bca_ab
 
 ; ============================================================================
 ; (vrcache_to_view + vrcache_warm_load flattened into seg_xform.s as vrcache_arm,

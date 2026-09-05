@@ -232,6 +232,7 @@
 .globalzp zp_dcl_out
 .globalzp plotq_n
 .globalzp plotq_mode
+.globalzp bca_ab
 .globalzp vrcache_ref_x
 .globalzp vrcache_ref_y
 .globalzp LC_QUOT_LO
@@ -432,7 +433,19 @@ zp_seg_count:               .res 1 ; [bsp]; remaining segs in subsector
 zp_anim_p:                  .res 2 ; [bsp]; anim table cursor (2; was the
 zp_anim_w:                  .res 2 ; [bsp]; anim write pointer (2; was $ED/$EE)
 zp_prev:                    .res 1 ; [clip]; pool-walk prev (from $E2 — structs)
-   .res 1                               ; FREE $62-$62
+bca_ab:                     .res 1 ; [ang+bsp]; per-frame view angle byte
+                                  ; (was BCA_WS+$2F, then zp_buf's slot,
+                                  ; freed with span_read 2026-07-26).
+                                  ; vrcache_ab aliases it.
+                                  ; NAMED 2026-09-05: this was an anonymous
+                                  ; pad marked 'FREE $62-$62' while the ABI
+                                  ; master baked BCA_AB = $62 and the drivers
+                                  ; and harness poked that constant.  The byte
+                                  ; was live; the note said free.  layout_fuzz
+                                  ; picks the first same-size pad as every
+                                  ; probe's partner, so it swapped symbol after
+                                  ; symbol INTO this live byte and reported ~20
+                                  ; innocent symbols as 'cares where it lives'.
 obj_n:                      .res 1 ; ROTATED IN 2026-09-04 (zprotate): 30.9
                                   ; accesses/frame.  This byte WAS
                                   ; zp_bv_entry, the bbox_visible class
@@ -540,12 +553,13 @@ plotq_n:                    .res 1 ; [clip]; plot queue write index (bytes,
 plotq_mode:                 .res 1 ; [clip]; $80 = enqueue (driver arms per
                                   ; frame until the flip vsync passes),
                                   ; $00 = draw direct (harness default)
-vrcache_ref_x:                  .res 1 ; [bsp] s16 COUNT frame ref = rns(to_view(0,0),3)
-   .res 1                               ; FREE $A3-$A3
-vrcache_ref_y:                  .res 1 ; [bsp] s16 count ref (y); TRUE16 2026-08-10
+vrcache_ref_x:                  .res 2 ; [bsp] s16 COUNT frame ref = rns(to_view(0,0),3)
+                                  ; w=2 (2026-09-05): inline.s stores +0 AND +1,
+                                  ; and the hi byte was a pad marked 'FREE $A3'.
+vrcache_ref_y:                  .res 2 ; [bsp] s16 count ref (y); TRUE16 2026-08-10
+                                  ; w=2: its hi byte was the 'FREE $A5' pad.
                                   ; ($A6-$A7 FREE — the s24 third bytes died)
                                   ; absolute — six warm-path ADCs per vertex
-   .res 1                               ; FREE $A5-$A5
 LC_QUOT_LO:                 .res 1 ; [clip]
 LC_QUOT_HI:                 .res 1 ; [clip]
 zp_line_xl_l:               .res 1 ; [bsp+clip]; u8, left X (oriented left-to-right)
@@ -878,19 +892,13 @@ zp_seg_v2_r_s = VX2+12
 ; --- $65: overlay group (2 phase-disjoint users) ---
 ; --- $66: overlay group (2 phase-disjoint users) ---
 ; --- $69: overlay group (2 phase-disjoint users) ---
-bca_ab = BCA_AB                   ; [ang+bsp]; = $62 (zp_buf's slot, freed
-                                  ; with span_read 2026-07-26): per-frame
-                                  ; view angle byte (was BCA_WS+$2F). ONE
-                                  ; truth: the value lives in the generated
-                                  ; abi.inc (included above) — drivers
-                                  ; poke the same constant. vrcache_ab aliases.
-                                  ; NOT $64: despite the old 'bca_vis $64
-                                  ; free' note, $64 is zp_bv_entry's HI
-                                  ; byte ($63/$64 pair, w=2) — the drivers
-                                  ; seed it and bca_frame rewrites it per
-                                  ; frame (the 2026-07-26 black-screen
-                                  ; lesson: trust widths, not free-notes).
-.assert BCA_AB < $100, error, "bca_ab must stay ZP (drivers STA it zp; engine reads assume 3-cycle)"
+; bca_ab is a NAMED reservation in the block above (2026-09-05), not an
+; equate to a baked abi.inc address: the drivers are in this link and say
+; bca_ab, the boot stubs take it from the generated engine_syms.inc, and
+; the harness asks symmap.  ld65 allocates it in ZEROPAGE, so the old
+; `.assert BCA_AB < $100` (drivers STA it zp) is the linker's job now.
+; $64 IS free: the note that used to live here called it zp_bv_entry's HI
+; byte, and that vector died with the bbox extent cache (2026-09-04).
 ; $65: bca_ccsave lives here via a LOCAL equate in
 ; ang/header_div.s (keep in sync) — sole owner
 ; (from the old $F5/$F6 squat inside the structs).

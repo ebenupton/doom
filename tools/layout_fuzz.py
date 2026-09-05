@@ -108,6 +108,15 @@ def zp_name(entry):
     return m.group(1) if m else '(pad)'
 
 
+def zp_label(entry):
+    """Name for reporting: the symbol, or a pad's own FREE note."""
+    nm = zp_name(entry)
+    if nm != '(pad)':
+        return nm
+    m = re.search(r';\s*(.*)$', entry[0])
+    return 'pad[' + (m.group(1).strip() if m else '?') + ']'
+
+
 def zp_size(entry):
     """Bytes an entry reserves.  The sweep must swap LIKE FOR LIKE: pairing
     a 26-byte block with a 1-byte pad displaces 25 bytes of neighbours and
@@ -275,12 +284,29 @@ def sweep_zp(wt, zp_src, base, log, group=8):
     bysize = collections.defaultdict(list)
     for i in range(n):
         bysize[zp_size(entries[i])].append(i)
-    def partner(i):
+    # ROTATED PARTNERS (2026-09-05).  The first cut returned the FIRST
+    # same-size pad for every probe, and that had two consequences, both
+    # bad:
+    #   * a group of 8 shares one partner, and `used` lets only ONE swap
+    #     through -- so a clean group proved nothing about the other 7.
+    #   * that one pad was `FREE $62-$62`, which was really bca_ab: a LIVE
+    #     byte whose address the ABI master baked.  Every size-1 probe
+    #     swapped its symbol on top of the view angle, so ~20 innocent
+    #     symbols came back as "cares where it lives" (2026-09-04 sweep).
+    # Each entry now starts its partner list at its own rank, so a group
+    # swaps as many disjoint pairs as the size class allows and one
+    # poisoned pad implicates one symbol, not the whole class.
+    rank = {i: k for sz in bysize for k, i in enumerate(bysize[sz])}
+    def partners(i):
         cand = [j for j in bysize[zp_size(entries[i])] if j != i]
-        p = [j for j in cand if zp_name(entries[j]) == '(pad)']
-        return (p or cand or [None])[0]
-    unprobed = [zp_name(entries[i]) for i in named if partner(i) is None]
-    named = [i for i in named if partner(i) is not None]
+        pads = [j for j in cand if zp_name(entries[j]) == '(pad)']
+        order = pads + [j for j in cand if j not in pads]
+        if not order:
+            return []
+        r = rank[i] % len(order)
+        return order[r:] + order[:r]
+    unprobed = [zp_name(entries[i]) for i in named if not partners(i)]
+    named = [i for i in named if partners(i)]
     log(f'  sweep: {len(named)} named entries probed size-for-size'
         + (f'; {len(unprobed)} have no same-size partner: '
            f'{", ".join(unprobed)}' if unprobed else ''))
@@ -290,33 +316,42 @@ def sweep_zp(wt, zp_src, base, log, group=8):
     def test(group_idx):
         order = list(range(n))
         used = set()
+        chosen = {}
         for i in group_idx:
-            j = partner(i)
-            if j is None or i in used or j in used:
+            if i in used:
+                continue
+            j = next((k for k in partners(i) if k not in used), None)
+            if j is None:
                 continue
             used.add(i); used.add(j)
+            chosen[i] = j
             order[i], order[j] = order[j], order[i]
         open(os.path.join(wt, 'src/zp.inc'), 'w').write(zp_apply(zp_src, order))
         ok, err = build(wt)
         if not ok:
-            return False, 'BUILD: ' + err.split('Error:')[-1][:90]
+            return False, 'BUILD: ' + err.split('Error:')[-1][:90], chosen
         got, err = render(wt, 'sweep.json')
         if got is None:
-            return False, 'RENDER: ' + err.split(':')[-1][:80]
+            return False, 'RENDER: ' + err.split(':')[-1][:80], chosen
         if [g[0] for g in got] != [b[0] for b in base]:
-            return False, 'PIXELS DIFFER'
-        return True, ''
+            return False, 'PIXELS DIFFER', chosen
+        return True, '', chosen
 
     culprits = []
 
     def probe(idxs):
-        ok, why = test(idxs)
+        ok, why, chosen = test(idxs)
         if ok:
             return
         if len(idxs) == 1:
-            nm = zp_name(entries[idxs[0]])
-            culprits.append((nm, why))
-            log(f'    CARES: {nm:24s} [{why}]')
+            i = idxs[0]
+            nm = zp_name(entries[i])
+            # NAME THE PARTNER: a probe is a SWAP, so a failure implicates
+            # the pair.  Without this the 2026-09-04 run could not tell
+            # "this symbol cares" from "the byte it landed on was live".
+            pn = zp_label(entries[chosen[i]]) if i in chosen else '(no partner)'
+            culprits.append((nm, why, pn))
+            log(f'    CARES: {nm:24s} <-> {pn:22s} [{why}]')
             return
         h = len(idxs) // 2
         probe(idxs[:h]); probe(idxs[h:])
@@ -365,8 +400,8 @@ def main():
         if ARGS.sweep:
             found = sweep_zp(wt, zp_src, base, lambda m: print(m, flush=True))
             print(f'\nSWEEP: {len(found)} entries depend on their address')
-            for nm, why in found:
-                print(f'  {nm:26s} {why}')
+            for nm, why, pn in found:
+                print(f'  {nm:26s} <-> {pn:22s} {why}')
             return 1 if found else 0
         if ARGS.swap:
             names = ARGS.swap.split(',')

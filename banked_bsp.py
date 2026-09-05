@@ -424,7 +424,8 @@ class BankedBspRender(BspRender6502):
 
     def render_frame(self, px, py, ab, floor_z=0):
         # bca_ab relocated from $FA2F to $1B6F (BCA_WS+$2F) in the banked build.
-        self.bm[abi.BCA_AB] = ab & 0xFF
+        self.bm[_rsym('bca_ab', banked=1)] = ab & 0xFF   # zp.inc symbol,
+                                                  # not a baked abi address
         # 2026-07-10 one-region merge: banked jt is at $2C00 (flat stays at
         # $4800), so the inherited render_frame's flat entry constants no
         # longer apply. Swap in the banked-map addresses around the call.

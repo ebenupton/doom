@@ -60,7 +60,7 @@ def main():
     for i in range(0x400): bare[abi.SQR_BASE+i] = src.bm[abi.SQR_BASE+i]
     for a,v in ZP.items(): bare[a]=v
     # (the RNS stack-page copy died 2026-08-18 — fossil since 2026-07-12)
-    bare[abi.BCA_AB]=0x80; bare[0xFF00]=0x00
+    bare[symmap.sym('bca_ab', banked=1)]=0x80; bare[0xFF00]=0x00
     bare.select(BANK_L0)
     sc.mpu.memory = bare; bare.mpu = sc.mpu
 
