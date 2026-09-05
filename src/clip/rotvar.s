@@ -38,20 +38,28 @@ rcp_r:
 ; S FOLDED INTO THE PRODUCERS (2026-09-05): sh is only ever the immediate
 ; 1 or 2, so S = sh + 8 is only ever 9 or 10 — a constant per arm.  The
 ; tail used to carry sh in X and compute TXA/CLC/ADC #8/STA on every
-; call; both arms now store the finished S and the tail is gone.  (X is
-; no longer touched at all here; the header still advertises it clobbered
-; and callers should keep assuming so.)
-   LDA #9                                  ; S = sh(1) + 8
-   STA zp_br_r_s
-   BNE rcp_fetch                           ; (always: A = 9; STA leaves Z)
+; call; both arms now store the finished S and the tail is gone.
+;
+; THROUGH X, not A, and cycle-for-cycle identical either way (LDX #imm 2 +
+; STX zp 3; the power arm's DEX/STX 5 matches the DEC it replaces).  X is
+; the register project_x_c wants S in — it opens with LDX zp_br_r_s to
+; index rns_vec_all — so leaving it there costs nothing and is the one
+; piece of a wider change that can be made in isolation.  It does NOT pay
+; on its own: only 7% of project_x_c's 35.6 calls a frame arrive with X
+; already holding S, because the VRCACHE-warm vertex paths reach the same
+; join without going through this ladder.  Making that load droppable is
+; an ABI sweep over every producer of zp_br_r_s, worth ~107 cyc/frame.
+   LDX #9                                  ; S = sh(1) + 8
+   STX zp_br_r_s
+   BNE rcp_fetch                           ; (always: X = 9; STX leaves Z)
 rcp_two:
    TYA
    ROR A                                   ; (hi & 1) -> b7, lo >>= 1
    SEC
    ROR A                                   ; $80 | (hi&1)<<6 | lo>>2
    TAY
-   LDA #10                                 ; S = sh(2) + 8
-   STA zp_br_r_s
+   LDX #10                                 ; S = sh(2) + 8
+   STX zp_br_r_s
 rcp_fetch:
    LDA RECIP_M8H-128,Y                     ; far half-table (idx2 - 128)
    STA zp_br_r_m8
@@ -59,7 +67,8 @@ rcp_fetch:
    BEQ rcp_pow                             ; idx2 = 128: an exact power —
    RTS                                     ;  S is one lower (bit_length)
 rcp_pow:
-   DEC zp_br_r_s                           ; sh + 7, off the stored sh + 8
+   DEX                                     ; sh + 7, and X keeps the value
+   STX zp_br_r_s
    RTS
 .endscope                                   ; (the recip scope — its close
                                             ; sat after the srecip data in
