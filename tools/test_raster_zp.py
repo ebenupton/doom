@@ -1,19 +1,14 @@
 #!/usr/bin/env python3
 """Gate: the NJ blob's zero-page literals against what ld65 actually gave.
 
-src/boot/linedraw_or.s is a SEPARATE ca65/ld65 unit -- it is not part of
-the engine link -- and it names its thirteen zero-page bytes as LITERALS
-(x0 = $82 .. y1 = $85, plus eight scratch).  The engine, meanwhile, lets
-ld65 allocate RASTER_ZP_X0..Y1 and SCRSTRT wherever the zero page falls.
-Nothing connected the two: they agree by luck, and a zp.inc edit that
-moved RASTER_ZP_X0 would leave the rasteriser reading someone else's byte
-with no build error and no test failure -- it would just draw wrong lines.
-tools/layout_fuzz.py --sweep flagged exactly this (2026-09-05).
+src/raster.s names its thirteen zero-page bytes as LITERALS (x0 = $82 ..
+y1 = $85, plus eight scratch) mirroring reservations that ld65 actually
+allocates.  Since the rasteriser joined the engine link (2026-09-05) the
+five ABI ones are pinned by .assert in the assembler itself, so half of
+this gate is now belt-and-braces.  The half that still earns its keep is
+the SCRATCH range, which no assembler directive can check:
 
-The blob cannot be generated from the map, because _build_raster() runs
-BEFORE the engine links and symmap would recurse.  So this checks instead:
-
-  1. the five ABI bytes equal ld65's allocation, and
+  1. the five ABI bytes equal ld65's allocation (also asserted in-source), and
   2. the eight SCRATCH bytes are occupied only by the engine variables
      recorded here as phase-disjoint.  zp.inc says of this range
      "nothing may live here across draws"; that is an invariant no build
@@ -30,7 +25,7 @@ os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
 import pygame; pygame.init(); pygame.display.set_mode((1, 1))
 import symmap
 
-BLOB = os.path.join(ROOT, 'src', 'boot', 'linedraw_or.s')
+BLOB = os.path.join(ROOT, 'src', 'raster.s')
 ZPINC = os.path.join(ROOT, 'src', 'zp.inc')
 
 # blob equate -> the engine symbol it must equal

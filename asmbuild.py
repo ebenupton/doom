@@ -35,7 +35,7 @@ _on_disk = {}    # banked -> c02 variant whose bins currently sit on disk.
 # unaligned slope_div/span_clip fragments ABUT behind it: no join pads,
 # all spare CODE space aggregated at the END (Eben's rule).
 _SOURCES = ['src/bsp_render.s', 'src/slope_div.s', 'src/span_clip.s',
-            'src/drv/walk_drv.s']
+            'src/drv/walk_drv.s', 'src/raster.s']
 _CFGS = {0: 'src/engine_flat.cfg', 1: 'src/engine_banked.cfg'}
 _TARGETS = {'engine': None, 'slope_div': None, 'span_clip': None,
             'bsp_render': None}
@@ -53,7 +53,6 @@ def _run(argv):
 
 
 def build(asm, banked=0, c02=None, out=None, force=False):
-    _build_raster()
     """Build one engine module. Raises RuntimeError on any tool error.
 
     `asm` is a module name ('span_clip') or legacy source name
@@ -138,34 +137,7 @@ def _build_locked(asm, banked, c02, defs, dflags, key, objdir, _marker):
     return text
 
 
-def _build_raster():
-    """Regenerate the NJ rasteriser bin that banked_bsp loads into bank C.
-
-    ONE variant since 2026-09-05.  The flat arm (linedraw_or_flat.bin, ORG
-    $7500) was built every time and read by NOTHING: the flat image has no
-    rasteriser at all -- its RASTER_ENTRY is a 3-byte stub the tube builder
-    patches to the resident emitters -- and the copro's real rasteriser is
-    the HOST's, which hostg.s assembles from the same raster/ sources at
-    its own address.  ENGINE.md's "$6200-$6AFF NJ rasteriser blob, loaded
-    by span_clip_6502.py" was stale with it."""
-    import subprocess
-    src = os.path.join(_ROOT, 'src', 'boot', 'linedraw_or.s')
-    deps = [src] + [os.path.join(_ROOT, 'src', 'boot', 'raster', f)
-                    for f in os.listdir(os.path.join(_ROOT, 'src', 'boot', 'raster'))]
-    newest = max(os.path.getmtime(d) for d in deps)
-    out = os.path.join(_ROOT, 'linedraw_or_reloc.bin')
-    if not os.path.exists(out) or os.path.getmtime(out) < newest:
-        obj = os.path.join(_ROOT, 'build', 'linedraw_or.o')
-        os.makedirs(os.path.join(_ROOT, 'build'), exist_ok=True)
-        subprocess.run(['ca65', '-I', os.path.join(_ROOT, 'src', 'boot'),
-                        src, '-o', obj], cwd=_ROOT, check=True, capture_output=True)
-        subprocess.run(['ld65', '-C', os.path.join(_ROOT, 'src', 'boot', 'cfg',
-                                                  'linedraw_or_banked.cfg'),
-                        obj, '-o', out], cwd=_ROOT, check=True, capture_output=True)
-
-
 def build_all(banked=0, c02=None, force=False):
-    _build_raster()
     build('engine', banked=banked, c02=c02, force=force)
 
 

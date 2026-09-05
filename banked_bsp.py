@@ -142,7 +142,8 @@ def build_banked(flatr):
     c = bytearray(16384)
     clip = open('span_clip_bankc.bin', 'rb').read()
     c[:len(clip)] = clip
-    rast = open('linedraw_or_reloc.bin', 'rb').read()      # ORG $A800
+    rast = open('engine_raster_bankc.bin', 'rb').read()   # IN THE ENGINE LINK
+                                                          # since 2026-09-05
     assert len(rast) <= RASTER_BUDGET, f'rasteriser {len(rast)} bytes overruns VPLOTC at $AE00'
     roff = RASTER_OFF - 0x8000
     c[roff:roff + len(rast)] = rast

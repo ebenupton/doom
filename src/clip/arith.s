@@ -483,7 +483,13 @@ REC_VERDICT_BELOW = 2
 ; driver stores the back-buffer page; the Python harness sets it in
 ; flat tests).
 .if ::BANKED
-RASTER_ENTRY = $A200                    ; bank C, pulled down by the 2026-09-02 C compaction (512 B top-of-A free)
+.import linedraw4                       ; src/raster.s -- IN THIS LINK since
+RASTER_ENTRY = linedraw4                ; 2026-09-05.  Was $A200 baked here
+                                        ; and kept equal to wherever
+                                        ; banked_bsp spliced the blob; the
+                                        ; linker owns the address now, so the
+                                        ; clipper calls the rasteriser BY
+                                        ; NAME and neither can drift.
 .else
 RASTER_ENTRY = $F610                    ; parasite: the resident tube glue's
                                         ; DIAG emitter slot (tubedrv SKIPTO
