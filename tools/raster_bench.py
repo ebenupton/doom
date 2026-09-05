@@ -24,7 +24,9 @@ sys.path.insert(0, ROOT)
 from py65.devices.mpu6502 import MPU
 
 BANKED = dict(blob='linedraw_or_reloc.bin', org=0xA200, budget=0x0C00)
-FLAT = dict(blob='linedraw_or_flat.bin', org=0x7500, budget=0x0B00)
+# FLAT retired 2026-09-05: the flat blob was dead output (see
+# asmbuild._build_raster).  The second live layout is the tube HOST's.
+FLAT = dict(blob='linedraw_or_reloc.bin', org=0xA200, budget=0x0C00)
 # The tube HOST carries its own copy: hostg.s .includes the same raster
 # sources, so HOSTT is a THIRD layout of this code and the one that draws
 # every pixel in the copro build.  Here the image is the whole program and

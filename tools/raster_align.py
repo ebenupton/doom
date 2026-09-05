@@ -51,10 +51,9 @@ IDX_READ = {0xBD, 0xB9, 0xBC, 0xBE, 0x1D, 0x19, 0x3D, 0x39, 0x5D, 0x59,
 UNCOND = {0x4C: 3, 0x6C: 3, 0x60: 1, 0x40: 1}      # JMP abs/ind, RTS, RTI
 
 VARIANTS = dict(
-    banked=dict(defs=('FLATORG=0',), cfg='linedraw_or_banked.cfg',
+    banked=dict(defs=(), cfg='linedraw_or_banked.cfg',
                 out='linedraw_or_reloc.bin', org=0xA200, budget=0x0C00),
-    flat=dict(defs=('FLATORG=1',), cfg='linedraw_or_flat.cfg',
-              out='linedraw_or_flat.bin', org=0x7500, budget=0x0B00),
+    # (the flat blob was retired 2026-09-05 -- dead output)
     # HOSTT: hostg.s .includes the same raster sources, so the tube host
     # is a third layout of this code -- and the one that draws every pixel
     # in the copro build.  Its ORG is $1900 and the entry is linedraw4
@@ -770,8 +769,7 @@ def cmd_apply(a):
         k = next(i for i, l in enumerate(lines)
                  if '.include "raster/nj-linedraw4-or.s"' in l)
         if wrapper == SRC:
-            ins = ['.if ::FLATORG', 'RA_BUILD = 3', '.else', 'RA_BUILD = 1',
-                   '.endif   ; ' + PAD_TAG]
+            ins = ['RA_BUILD = 1   ; ' + PAD_TAG + ' banked blob ($A200)']
         else:
             ins = ['RA_BUILD = 2   ; ' + PAD_TAG + ' tube host layout']
         lines[k:k] = [l if l.startswith('.') or '=' in l else l for l in ins]

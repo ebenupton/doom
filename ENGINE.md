@@ -214,8 +214,12 @@ wrong rather than adding a second stale copy.
     $1C00-$1FFF  sqr quarter-square tables (unforked, one address)
     $2B00-$566C  ALL CODE, one segment (islands died in the 2026-07-21 map;
                  the head moved $2000 -> $2C00 -> $2B00, cfg-anchored)
-    $6200-$6AFF  NJ rasteriser blob (RASTER_ENTRY $6200)  ** loaded by
-                 span_clip_6502.py, NOT in any cfg — a placement trap **
+    $6200-$6AFF  FREE (2026-09-05).  The flat build has NO rasteriser: its
+                 RASTER_ENTRY is a 3-byte stub the tube builder patches to
+                 the resident emitters, and the copro's real rasteriser is
+                 the HOST's, assembled into HOSTT from the same raster/
+                 sources.  linedraw_or_flat.bin was built every time and
+                 read by nothing; that arm is gone.
     $6B00-$6FFF  FREE (1,280 contiguous — the 2026-07-27 recovery:
                  five psi planes shuffled down to $0600/$0B00/$8100/
                  $E800/$E900; flat-vplot candidate window)

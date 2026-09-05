@@ -139,25 +139,29 @@ def _build_locked(asm, banked, c02, defs, dflags, key, objdir, _marker):
 
 
 def _build_raster():
-    """Regenerate the NJ rasteriser bin (read at load by span_clip_6502 and
-    the banked images).  ca65/ld65 since 2026-09-05 — the beebasm build was
-    retired after both variants were proved byte-identical."""
+    """Regenerate the NJ rasteriser bin that banked_bsp loads into bank C.
+
+    ONE variant since 2026-09-05.  The flat arm (linedraw_or_flat.bin, ORG
+    $7500) was built every time and read by NOTHING: the flat image has no
+    rasteriser at all -- its RASTER_ENTRY is a 3-byte stub the tube builder
+    patches to the resident emitters -- and the copro's real rasteriser is
+    the HOST's, which hostg.s assembles from the same raster/ sources at
+    its own address.  ENGINE.md's "$6200-$6AFF NJ rasteriser blob, loaded
+    by span_clip_6502.py" was stale with it."""
     import subprocess
     src = os.path.join(_ROOT, 'src', 'boot', 'linedraw_or.s')
     deps = [src] + [os.path.join(_ROOT, 'src', 'boot', 'raster', f)
                     for f in os.listdir(os.path.join(_ROOT, 'src', 'boot', 'raster'))]
     newest = max(os.path.getmtime(d) for d in deps)
-    for out, flag, cfg in (
-            (os.path.join(_ROOT, 'linedraw_or_reloc.bin'), '0', 'linedraw_or_banked.cfg'),
-            (os.path.join(_ROOT, 'linedraw_or_flat.bin'), '1', 'linedraw_or_flat.cfg')):
-        if not os.path.exists(out) or os.path.getmtime(out) < newest:
-            obj = os.path.join(_ROOT, 'build', f'linedraw_or_{flag}.o')
-            os.makedirs(os.path.join(_ROOT, 'build'), exist_ok=True)
-            subprocess.run(['ca65', '-I', os.path.join(_ROOT, 'src', 'boot'),
-                            '-D', f'FLATORG={flag}', src, '-o', obj],
-                           cwd=_ROOT, check=True, capture_output=True)
-            subprocess.run(['ld65', '-C', os.path.join(_ROOT, 'src', 'boot', 'cfg', cfg),
-                            obj, '-o', out], cwd=_ROOT, check=True, capture_output=True)
+    out = os.path.join(_ROOT, 'linedraw_or_reloc.bin')
+    if not os.path.exists(out) or os.path.getmtime(out) < newest:
+        obj = os.path.join(_ROOT, 'build', 'linedraw_or.o')
+        os.makedirs(os.path.join(_ROOT, 'build'), exist_ok=True)
+        subprocess.run(['ca65', '-I', os.path.join(_ROOT, 'src', 'boot'),
+                        src, '-o', obj], cwd=_ROOT, check=True, capture_output=True)
+        subprocess.run(['ld65', '-C', os.path.join(_ROOT, 'src', 'boot', 'cfg',
+                                                  'linedraw_or_banked.cfg'),
+                        obj, '-o', out], cwd=_ROOT, check=True, capture_output=True)
 
 
 def build_all(banked=0, c02=None, force=False):
