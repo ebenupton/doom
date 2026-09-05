@@ -197,11 +197,11 @@ rp_recip:
 ; kernel vector. r_m8/r_s stores stay: r_s doubles as the VYCACHE rlo key
 ; and the rlo-writer invariant requires the true value.
    ZERO zp_br_r_m8
-   LDA #1
-   STA zp_br_r_s                           ; (the hand kernel fold died: the
+   LDX #1                                  ; S IN X for project_x_c_xs
+   STX zp_br_r_s                           ; (the hand kernel fold died: the
                                            ; counts projector selects itself)
 ; ---- project + land in the clipped endpoint's struct ----
-   JSR project_x_c                      ; -> res = rns(b123); kernel
+   JSR project_x_c_xs                      ; -> res = rns(b123); kernel
                                            ; RTSes straight here (px tail-
                                            ; jumps, 2026-08-12)
    LDX zp_seg_ep

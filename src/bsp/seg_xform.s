@@ -216,11 +216,11 @@ nc_ok:
    TAY                                     ; swapped idx rides Y
    LDA RECIP_M8,Y
    STA zp_br_r_m8
-   LDA RECIP_S,Y
-   STA zp_br_r_s                           ; (no RNS_SELECT: the counts
+   LDX RECIP_S,Y                           ; S IN X for project_x_c_xs
+   STX zp_br_r_s                           ; (no RNS_SELECT: the counts
                                            ; projector selects net = S-3)
 ncr_done:
-   JSR project_x_c                      ; -> zp_br_res_l/h = rns(b123);
+   JSR project_x_c_xs                      ; -> zp_br_res_l/h = rns(b123);
                                            ; the KERNEL RTSes straight here
                                            ; (px tail-jumps, 2026-08-12) —
                                            ; sx = 128 + res, biased in the

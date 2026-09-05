@@ -62,8 +62,16 @@ px_frac_z:
    STA zp_br_t2                            ; A = 0 (the BEQ's operand)
    JMP px_no_frac
 
+; ENTRY CONTRACT (2026-09-05).  project_x_c takes S from zero page and
+; loads it into X; project_x_c_xs takes it ALREADY IN X and skips that
+; load.  Every caller in the engine uses the _xs form -- the three sites
+; (seg_xform's ncr_done, objects' obj_recip_done, lo's endpoint project)
+; each set zp_br_r_s from X immediately before the call, and both joins'
+; other arrival is recip_hi, which leaves S in X by construction.  The
+; zero-page entry stays for anything added later that does not.
 ::project_x_c:
    LDX zp_br_r_s                           ; X = net+3 = S: EVERY net is a ;# ||         0.5
+::project_x_c_xs:                          ; X = S already
    LDA rns_vec_all-1,X                     ; baked kernel now (s1..s4 landed ;# ||||       0.8
    STA px_go_op                            ; 2026-08-10) — one flat select ;# |||        0.7
                                         ; into px's PRIVATE tail-jump

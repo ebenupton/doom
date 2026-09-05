@@ -418,14 +418,14 @@ obj_near:
    TAY
    LDA RECIP_M8,Y
    STA zp_br_r_m8
-   LDA RECIP_S,Y
-   STA zp_br_r_s
+   LDX RECIP_S,Y                           ; S IN X for project_x_c_xs
+   STX zp_br_r_s
 obj_recip_done:
 ; --- screen x of the billboard's CENTRE.  A billboard is a 2D scaled
 ;     stamp, not a 3D object: one base point and one scale factor is the
 ;     whole of it, so the edges are NOT projected -- OBJ_RC is not even
 ;     read here any more.  The width falls out of the scale below.
-   JSR project_x_c
+   JSR project_x_c_xs
    LDA zp_br_res_l
    CLC
    ADC #128                                ; sx = 128 + rns(b123)
