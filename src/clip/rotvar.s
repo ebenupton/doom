@@ -35,30 +35,31 @@ rcp_r:
    TYA                                     ; ONE shift: C = 1 (hi was 1),
    ROR A                                   ; idx2 = $80 | lo>>1
    TAY
-   LDX #1                                  ; sh = 1
-   BNE rcp_fetch                           ; (always)
+; S FOLDED INTO THE PRODUCERS (2026-09-05): sh is only ever the immediate
+; 1 or 2, so S = sh + 8 is only ever 9 or 10 — a constant per arm.  The
+; tail used to carry sh in X and compute TXA/CLC/ADC #8/STA on every
+; call; both arms now store the finished S and the tail is gone.  (X is
+; no longer touched at all here; the header still advertises it clobbered
+; and callers should keep assuming so.)
+   LDA #9                                  ; S = sh(1) + 8
+   STA zp_br_r_s
+   BNE rcp_fetch                           ; (always: A = 9; STA leaves Z)
 rcp_two:
    TYA
    ROR A                                   ; (hi & 1) -> b7, lo >>= 1
    SEC
    ROR A                                   ; $80 | (hi&1)<<6 | lo>>2
    TAY
-   LDX #2                                  ; sh = 2
+   LDA #10                                 ; S = sh(2) + 8
+   STA zp_br_r_s
 rcp_fetch:
    LDA RECIP_M8H-128,Y                     ; far half-table (idx2 - 128)
    STA zp_br_r_m8
    CPY #$80
    BEQ rcp_pow                             ; idx2 = 128: an exact power —
-   TXA                                     ;  S is one lower (bit_length)
-   CLC
-   ADC #8                                  ; S = sh + 8
-   STA zp_br_r_s
-   RTS
+   RTS                                     ;  S is one lower (bit_length)
 rcp_pow:
-   TXA
-   CLC
-   ADC #7                                  ; S = sh + 7
-   STA zp_br_r_s
+   DEC zp_br_r_s                           ; sh + 7, off the stored sh + 8
    RTS
 .endscope                                   ; (the recip scope — its close
                                             ; sat after the srecip data in
