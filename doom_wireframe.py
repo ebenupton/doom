@@ -476,6 +476,55 @@ def _prescale_height(h):
     """
     return (h * ASPECT_NUM + (PRESCALE * ASPECT_DEN) // 2) // (PRESCALE * ASPECT_DEN)
 
+# ── Step-evening height overrides (Eben, 2026-09-05) ─────────────────────
+#
+# APPLIED HERE, not at the SECTORS parse: the alt-BSP reload above
+# re-reads SECTORS out of e1m1_zkdepth.wad and would silently drop an
+# override written any earlier.  This is the last write to the table, and
+# everything below — fp_sectors, player_floor, fp_objects, the packer, the
+# float arbiter — reads it from here.  Objects therefore need no separate
+# treatment: fp_objects takes each thing's z from player_floor(), so the
+# four armour bonuses in the alcove ride with the floor they stand on.
+#
+# THE DEFECT.  The engine height quantum is
+# PRESCALE*ASPECT_DEN/ASPECT_NUM = 8*5/6 = 6.667 wu.  E1M1 builds this
+# alcove from 8 wu risers, which is 1.20 quanta — not a whole number, so
+# _prescale_height's round-to-nearest has to ALTERNATE the riser it emits:
+# 1, 1, 2.  A 2-versus-1 quantum step is twice its neighbour, and that is
+# what reads as an uneven top step on screen.
+#
+# THE FIX is to re-cut the flight to a whole number of quanta per step —
+# its PITCH.  Pitch 1 here: three risers of one quantum, 7 wu each, which
+# is uniform in the world AND in quanta.  The alcove floor comes down 3 wu
+# and the two steps with it; the foot is pinned by room 7.
+#
+# WHY THE ARMOUR STAIR IS NOT IN THIS TABLE.  Its risers are 16 wu = 2.40
+# quanta, and re-cutting it runs into the step rule.  DOOM blocks a climb
+# over MAXSTEPHEIGHT = 24 wu; the engine has only quantised heights, so it
+# tests against colmap's STEP_PS = 4 quanta, and because the two floors
+# round INDEPENDENTLY a true 24 wu gap can come out as 3 or 4 quanta.  No
+# integer STEP_PS reproduces the rule exactly, so colmap asserts that the
+# two agree on every passable pair.  Room 24 touches all six steps
+# directly — the flight is a set of strips in the middle of the room, not
+# a corridor — so the rule is checked room-to-step six times.  Room 24 is
+# at q-1, and a step at q3 sits in the world band 17..23, i.e. 25..31 wu
+# above it: always over DOOM's 24, yet exactly 4 quanta, which the engine
+# would allow.  Any q3 step touching room 24 is therefore a build error.
+# Pitch 2 from q1 lands step 2 on q3 and is refused; pitch 2 from q0 and
+# pitch 3 from q2 both skip q3 and are legal.  See project_step_evening.
+_STEP_EVEN = {
+    # --- helmet alcove off room 7, PITCH 1: three risers of 1 quantum ---
+     8: (    7, None),   # step 1        was   8   q1  (was q1)
+    51: (   14, None),   # step 2        was  16   q2  (was q2)
+    52: (   21, None),   # alcove floor  was  24   q3  (was q4)
+}
+sectors = [
+    (_ov[0] if (_ov := _STEP_EVEN.get(_i)) else _s[0],
+     _ov[1] if _ov and _ov[1] is not None else _s[1],
+     *_s[2:])
+    for _i, _s in enumerate(sectors)
+]
+
 fp_sectors = [
     (_prescale_height(s[0]), _prescale_height(s[1]), *s[2:])
     for s in sectors
