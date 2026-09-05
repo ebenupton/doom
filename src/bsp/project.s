@@ -142,14 +142,12 @@ pxm_pd:
    CLC                                                                    ;# |          0.3
    ADC zp_br_r_m8                                                         ;# ||         0.4
    TAX                                     ; X = |vx| + M8                ;# |          0.3
-   BCC pxm_ppd                             ; arm swap 2026-08-12 (uo = 2  ;# |||        0.5
-   LDA sqr2_l,X                            ;  suite execs vs 228): the JMP ;#            0.0
-   SBC sqr_l,Y                            ; moved to the cold arm (C set  ;#            0.0
-   STA zp_br_a                            ;  on this arm from the BCC)    ;#            0.0
-   LDA sqr2_h,X                                                           ;#            0.0
-   SBC sqr_h,Y                                                            ;#            0.0
-   JMP pxm_pacc                                                           ;#            0.0
-pxm_ppd:
+   BCS pxm_puo                             ; ARM POLARITY 2026-09-05: the sum
+                                           ; carries 0.1 vs 17.5 execs/frame, so the
+                                           ; HOT arm falls through (2 cyc) and
+                                           ; the cold one is islanded below.
+                                           ; C=1 on the taken branch, exactly as
+                                           ; the old BCC fall-through gave it.
    LDA sqr_l,X                                                            ;# |||        0.5
    SEC                                                                    ;# |          0.3
    SBC sqr_l,Y                                                            ;# |||        0.5
@@ -191,6 +189,33 @@ px_go:
    CLC                                     ; kernels enter C=0 (the neg-vx ;# ||         0.3
    JMP rns_s8                              ; arm exits with C=1) — SMC:   ;# ||         0.5
 px_go_op = px_go + 2                       ; operand LO poked per call
+; --- COLD SUM-OVERFLOW ARMS (islanded 2026-09-05) -------------------------
+; f(a+b) needs a NINE-bit index, so each multiply carries a second arm for
+; the sums that reach the +256 window.  tools/qsq_audit.py recovers both
+; operands at every site (a = (s+d)/2, b = (s-d)/2 from the two indices) and
+; measured these arms at 0.1-0.6 executions a frame against 13.7-21.9 for
+; their partners -- yet they held the fall-through slot, so the hot path
+; paid a TAKEN branch.  The arms live here now and the hot path falls
+; straight into its join.  Entry carry is unchanged: BCS takes the branch
+; with C=1, which is what the old BCC gave these SBCs by NOT taking it.
+; (The 7-bit operand trick from doom-z80's umul8x8-z80.md, which would
+; delete these arms outright, does not apply: no site is 7-bit bounded --
+; the smallest maximum operand anywhere is 178.)
+pxm_puo:
+   LDA sqr2_l,X
+   SBC sqr_l,Y
+   STA zp_br_a
+   LDA sqr2_h,X
+   SBC sqr_h,Y
+   JMP pxm_pacc
+pxm_nuo:
+   LDA sqr2_l,X
+   SBC sqr_l,Y
+   STA zp_br_a
+   LDA sqr2_h,X
+   SBC sqr_h,Y
+   JMP pxm_nacc
+
 pxm_neg:
 ; negative vx: b123 -= |vx|*M8 (unsigned product, subtractive accumulate)
    EOR #$FF                                                               ;#            0.0
@@ -208,14 +233,12 @@ pxm_nd:
    CLC                                                                    ;#            0.0
    ADC zp_br_r_m8                                                         ;#            0.1
    TAX                                                                    ;#            0.0
-   BCC pxm_npd                             ; arm swap 2026-08-12 (nuo = 2 ;#            0.1
-   LDA sqr2_l,X                            ;  suite execs vs 243)
-   SBC sqr_l,Y
-   STA zp_br_a
-   LDA sqr2_h,X
-   SBC sqr_h,Y
-   JMP pxm_nacc
-pxm_npd:
+   BCS pxm_nuo                             ; ARM POLARITY 2026-09-05: the sum
+                                           ; carries 0.1 vs 13.7 execs/frame, so the
+                                           ; HOT arm falls through (2 cyc) and
+                                           ; the cold one is islanded below.
+                                           ; C=1 on the taken branch, exactly as
+                                           ; the old BCC fall-through gave it.
    LDA sqr_l,X                                                            ;#            0.1
    SEC                                                                    ;#            0.0
    SBC sqr_l,Y                                                            ;#            0.1
@@ -390,14 +413,12 @@ pym_pd:
    CLC                                                                    ;# ||         0.5
    ADC zp_br_r_m8                                                         ;# ||||       0.7
    TAX                                     ; X = h + M8                   ;# ||         0.5
-   BCC pym_ppd                             ; arm swap 2026-08-12 (puo = 20 ;# ||||       0.7
-   LDA sqr2_l,X                           ;  suite execs vs 392): f(x+y)  ;#            0.0
-   SBC sqr_l,Y                            ;  overflowed into the +256     ;#            0.0
-   STA zp_br_t2                           ;  window (carry in = 1, from   ;#            0.0
-   LDA sqr2_h,X                           ;  the BCC)                     ;#            0.0
-   SBC sqr_h,Y                                                            ;#            0.0
-   JMP pym_ptail                           ; A = hi(h*M8) — positive tail ;#            0.0
-pym_ppd:
+   BCS pym_puo                             ; ARM POLARITY 2026-09-05: the sum
+                                           ; carries 0.6 vs 19.1 execs/frame, so the
+                                           ; HOT arm falls through (2 cyc) and
+                                           ; the cold one is islanded below.
+                                           ; C=1 on the taken branch, exactly as
+                                           ; the old BCC fall-through gave it.
    LDA sqr_l,X                                                            ;# |||||      1.0
    SEC                                                                    ;# ||         0.5
    SBC sqr_l,Y                                                            ;# |||||      1.0
@@ -418,6 +439,33 @@ pym_ptail:
    LDX #0                                                                 ;# ||         0.5
    JMP py_shift                                                           ;# ||||       0.7
 .endif
+; --- COLD SUM-OVERFLOW ARMS (islanded 2026-09-05) -------------------------
+; f(a+b) needs a NINE-bit index, so each multiply carries a second arm for
+; the sums that reach the +256 window.  tools/qsq_audit.py recovers both
+; operands at every site (a = (s+d)/2, b = (s-d)/2 from the two indices) and
+; measured these arms at 0.1-0.6 executions a frame against 13.7-21.9 for
+; their partners -- yet they held the fall-through slot, so the hot path
+; paid a TAKEN branch.  The arms live here now and the hot path falls
+; straight into its join.  Entry carry is unchanged: BCS takes the branch
+; with C=1, which is what the old BCC gave these SBCs by NOT taking it.
+; (The 7-bit operand trick from doom-z80's umul8x8-z80.md, which would
+; delete these arms outright, does not apply: no site is 7-bit bounded --
+; the smallest maximum operand anywhere is 178.)
+pym_puo:
+   LDA sqr2_l,X
+   SBC sqr_l,Y
+   STA zp_br_t2
+   LDA sqr2_h,X
+   SBC sqr_h,Y
+   JMP pym_ptail
+pym_nuo:
+   LDA sqr2_l,X
+   SBC sqr_l,Y
+   STA zp_br_t2
+   LDA sqr2_h,X
+   SBC sqr_h,Y
+   JMP pym_nneg
+
 pym_neg:
 ; negative h: |h| through the quarter-square, negate during the copy-out
    EOR #$FF                                                               ;# |          0.2
@@ -433,14 +481,12 @@ pym_nd:
    CLC                                                                    ;# |          0.2
    ADC zp_br_r_m8                                                         ;# |          0.2
    TAX                                                                    ;# |          0.2
-   BCC pym_npd                             ; arm swap 2026-08-12 (nuo = 5 ;# |          0.2
-   LDA sqr2_l,X                            ;  suite execs vs 309)         ;#            0.0
-   SBC sqr_l,Y                                                            ;#            0.0
-   STA zp_br_t2                                                           ;#            0.0
-   LDA sqr2_h,X                                                           ;#            0.0
-   SBC sqr_h,Y                                                            ;#            0.0
-   JMP pym_nneg                                                           ;#            0.0
-pym_npd:
+   BCS pym_nuo                             ; ARM POLARITY 2026-09-05: the sum
+                                           ; carries 0.1 vs 21.9 execs/frame, so the
+                                           ; HOT arm falls through (2 cyc) and
+                                           ; the cold one is islanded below.
+                                           ; C=1 on the taken branch, exactly as
+                                           ; the old BCC fall-through gave it.
    LDA sqr_l,X                                                            ;# |          0.3
    SEC                                                                    ;# |          0.2
    SBC sqr_l,Y                                                            ;# |          0.3
