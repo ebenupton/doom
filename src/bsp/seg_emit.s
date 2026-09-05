@@ -310,6 +310,9 @@ rm1_ihi_lo:
    JMP hg_query
 range_cull:
    JMP s_advance
+; (2026-09-05: moving range_fwd here to fall into hg_query is EXACTLY
+;  neutral — the ladder above it falls into range_fwd just as often as
+;  range_fwd jumps here, so the jump only moves.  Measured, not guessed.)
 hg_query:
    JSR span_has_gap                          ; in: A = ihi, zp_i_l = ilo
    BCC range_cull                          ; C=0: no visible column, cull

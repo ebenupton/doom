@@ -116,7 +116,7 @@ def zp_apply(text, order):
     return '\n'.join(lines[:a] + body + lines[b + 1:])
 
 
-def zp_shuffle(text, rng):
+def zp_shuffle(text, rng, pin=()):
     """Shuffle whole reservation ENTRIES (a .res line plus its trailing
     continuation-comment lines, which belong to it)."""
     lines, a, b = zp_block(text)
@@ -133,7 +133,13 @@ def zp_shuffle(text, rng):
         else:
             tail.append((k, lines[k]))
     if cur: entries.append(cur)
-    rng.shuffle(entries)
+    held = {i for i, e in enumerate(entries) if zp_name(e) in set(pin)}
+    movable = [i for i in range(len(entries)) if i not in held]
+    order = list(movable); rng.shuffle(order)
+    seq, it = [], iter(order)
+    for i in range(len(entries)):
+        seq.append(i if i in held else next(it))
+    entries = [entries[i] for i in seq]
     body = [l for e in entries for l in e]
     return '\n'.join(lines[:a] + body + lines[b + 1:]), len(entries)
 
@@ -238,6 +244,61 @@ def bisect_zp(wt, zp_src, base, seed, log):
     log(f'  CULPRIT SET ({len(cur)}): {names}   [{why}]')
 
 
+def sweep_zp(wt, zp_src, base, log, group=8):
+    """Isolate EVERY zp symbol that cares where it lives.
+
+    A symbol is probed by swapping it with a PAD entry (an unnamed .res —
+    nothing references it, so the swap moves exactly one named thing).
+    Symbols are probed `group` at a time against distinct pads; a failing
+    group is bisected, so a clean layout costs one build per group and a
+    dirty one costs a handful more.
+    """
+    _, _, _, entries = zp_entries(zp_src)
+    n = len(entries)
+    named = [i for i in range(n) if zp_name(entries[i]) != '(pad)']
+    pads = [i for i in range(n) if zp_name(entries[i]) == '(pad)']
+    log(f'  sweep: {len(named)} named entries, {len(pads)} pads to swap against')
+    if not pads:
+        log('  no pads to probe with'); return []
+
+    def test(group_idx):
+        order = list(range(n))
+        for k, i in enumerate(group_idx):
+            j = pads[k % len(pads)]
+            if i == j: continue
+            order[i], order[j] = order[j], order[i]
+        open(os.path.join(wt, 'src/zp.inc'), 'w').write(zp_apply(zp_src, order))
+        ok, err = build(wt)
+        if not ok:
+            return False, 'BUILD: ' + err.split('Error:')[-1][:90]
+        got, err = render(wt, 'sweep.json')
+        if got is None:
+            return False, 'RENDER: ' + err.split(':')[-1][:80]
+        if [g[0] for g in got] != [b[0] for b in base]:
+            return False, 'PIXELS DIFFER'
+        return True, ''
+
+    culprits = []
+
+    def probe(idxs):
+        ok, why = test(idxs)
+        if ok:
+            return
+        if len(idxs) == 1:
+            nm = zp_name(entries[idxs[0]])
+            culprits.append((nm, why))
+            log(f'    CARES: {nm:24s} [{why}]')
+            return
+        h = len(idxs) // 2
+        probe(idxs[:h]); probe(idxs[h:])
+
+    for k in range(0, len(named), group):
+        chunk = named[k:k + group]
+        probe(chunk)
+        log(f'  ...{min(k + group, len(named))}/{len(named)} probed, {len(culprits)} found', )
+    return culprits
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('mode', nargs='?', default='zp', choices=['zp', 'banked', 'both'])
@@ -247,6 +308,13 @@ def main():
     ap.add_argument('--keep', action='store_true', help='keep the worktree on failure')
     ap.add_argument('--bisect', type=int, default=None,
                     help='localise a failing zp seed to a minimal entry set')
+    ap.add_argument('--sweep', action='store_true',
+                    help='zp: probe EVERY named entry (swapped with a pad) and '
+                         'list the ones that care where they live')
+    ap.add_argument('--pin', default=None,
+                    help='zp: comma-separated entries to hold at their current '
+                         'slot while everything else shuffles (the way to prove '
+                         'the rest of the layout is free once a contract is known)')
     ap.add_argument('--swap', default=None,
                     help='zp: swap named entries pairwise, A,B[,C,D...] — the '
                          'precise probe (a one-entry subset is a no-op, so the '
@@ -265,6 +333,12 @@ def main():
         print(f'baseline: {len(base)} poses, {sum(c for _, c in base):,} cycles')
 
         zp_src = open(os.path.join(wt, 'src/zp.inc')).read()
+        if ARGS.sweep:
+            found = sweep_zp(wt, zp_src, base, lambda m: print(m, flush=True))
+            print(f'\nSWEEP: {len(found)} entries depend on their address')
+            for nm, why in found:
+                print(f'  {nm:26s} {why}')
+            return 1 if found else 0
         if ARGS.swap:
             names = ARGS.swap.split(',')
             _, _, _, entries = zp_entries(zp_src)
@@ -298,7 +372,7 @@ def main():
             open(os.path.join(wt, 'src/zp.inc'), 'w').write(zp_src)
             open(os.path.join(wt, 'tools/gen_abi.py'), 'w').write(abi_src)
             if mode == 'zp':
-                new, n = zp_shuffle(zp_src, rng)
+                new, n = zp_shuffle(zp_src, rng, pin=(ARGS.pin.split(',') if ARGS.pin else ()))
                 open(os.path.join(wt, 'src/zp.inc'), 'w').write(new)
                 note = f'{n} reservations shuffled'
             else:

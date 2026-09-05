@@ -772,8 +772,18 @@ ct_f_r2out:
 ; the delta again). (0,0) is unreachable — the classify routing
 ; excludes viewer-coincident corners.
 ; ============================================================================
-.macro CORNER_ENTRY name, negx, negy, obase
+.macro CORNER_ENTRY name, negx, negy, obase, fall
    .local czx, czy
+.ifnblank fall
+; `fall` expansion: the zero-axis arms move ABOVE the entry so the body's
+; last instruction falls straight into lf_ns.  They are branch targets
+; only (the code above this ends in a JMP), and the body is ~60 bytes, so
+; the backward BEQs are comfortably in range.
+czx:
+   JMP ns_dx0
+czy:
+   JMP ns_dy0
+.endif
 name:
 ; Corner entry, one sign class.  (The corner-phi MEMO that used to sit
 ; here — 128-slot xor-hashed key/psi planes, probe + staggered key bank +
@@ -808,12 +818,14 @@ name:
    ORA pa_dy                               ; just the zero-out            ;#            0.3
    BEQ czy                                                                ;#            0.2
 .endif
+.ifblank fall
    JMP lf_ns                                                              ;# |          0.6
 czx:
    JMP ns_dx0
 czy:
    JMP ns_dy0
-.endmacro
+.endif                                     ; (the fall expansion emitted its
+.endmacro                                  ;  arms above the entry instead)
 ; octant class base = (dx<0)*4 + (dy<0)*2; lf_ns adds axgt.
 ; PLACEMENT: flat = the ANGX window; banked = linear in ANG_BK. Either
 ; way the entries, the width arms, lf_ns and the compose chain below
@@ -823,9 +835,11 @@ SEG_HIGHX
 angx_head:
 .endif
 CORNER_ENTRY corner_phi_nn, 1, 1, 6                                          ;# ||||       3.6
-CORNER_ENTRY corner_phi_pn, 0, 1, 2                                          ;# |          1.2
 CORNER_ENTRY corner_phi_np, 1, 0, 4                                          ;# |          0.6
 CORNER_ENTRY corner_phi_pp, 0, 0, 0                                          ;# |          0.5
+; corner_phi_pn is expanded LAST, immediately above lf_ns, and falls into
+; it: 24.9 of the 66.8 entries a frame, the hottest of the four
+; (tools/jump_census.py, 2026-09-05).
 
 ; ============================================================================
 ; Width arms — the 16-bit reductions, placed ABOVE lf_ns so its
@@ -981,6 +995,8 @@ ns_wide:
    BNE ns_x16                              ; axis is wide?
    LDA pa_dy+1                             ; (dy: the arm wants the hi
    JMP ns_x8y16                            ;  byte riding A)
+CORNER_ENTRY corner_phi_pn, 0, 1, 2, 1                                       ;# |          1.2
+                                        ; (falls through into lf_ns)
 lf_ns:
 ; Width tests FUSED (2026-08-14 census: 72.5 of 72.6 atans/frame are
 ; pure 8-bit — the wide arms are one-in-a-thousand): one ORA+branch

@@ -110,7 +110,7 @@ no_obj:
 ; The header hi is DERIVED: page + >ROM_SEG_HDR_C — this ADC is the
 ; rebase both loaders used to do. ---
    LDY ROM_SS_CNT_C,X                      ; cnt-1 ($FF = empty subsector:
-   BMI sl_rts                              ;  BMI is the empty test — the
+   BMI ss_empty                            ;  BMI is the empty test — the
    STY zp_seg_count                        ;  live values are 0..27); the
                                         ; advance loops end on BMI too
                                         ; (the -1 saved a decode)
@@ -192,61 +192,14 @@ ssk_ft_live:
 
 ; --- Loop over segs (empties returned in the prologue; zp_seg_count
 ; holds cnt-1 >= 0, so there is nothing to gate here) ---
-sl_rts:
-   RTS
-; Backface back-exit advance twin (hoisted from seg_emit.s 2026-08-13):
-; single entry (backface.s JMPs), never left bank SEG, and it FALLS
-; into seg_proc — the 57%-majority arc pays no jump at all now.
-::s_advance_l0:
-   CLC
-   LDA zp_seg_hdr_p
-   ADC #LAY_HDR_STRIDE                     ; 14 since the APV2 pair died; runs
-   STA zp_seg_hdr_p                        ; stay in-page, so no carry needed
-   DEC zp_seg_count                        ; count holds cnt-1: done when
-   BMI sl_rts                              ; it wraps negative
-::seg_proc:                             ; global: the advance tails in
-                                        ; seg_emit.s loop back here
-; (no PAGE: every arrival is L0-proven — the prologue paged L0 for the
-;  first seg; s_advance pages L0 on its off-bank arcs; backface culls
-;  (the majority back-edge, 57% of iterations) read headers under L0
-;  and enter via s_advance_l0 without ever leaving. 2026-07-21 grind.)
-; (Records reset MOVED to hg_pass 2026-07-11: the count bytes' only
-; reader is ms_dispatch, which runs post-visibility — culled segs paid
-; four dead stores each. rec_buf lo is zeroed once per frame in
-; br_init_frame (nothing ever writes it non-zero) and the per-seg _h
-; disarm is gone: every DCL call site arms/disarms explicitly.)
-
-; --- seg header via the persistent pointer. Flags first; v1/v2 keys
-; (offsets 0-3) are only read after the back-face test passes —
-; back-facing segs never need them. ---
-; 16-byte header layout (wad_packed.py SH_*, stride 16 since 2026-07-11):
-;   +0/+1  v1 key: A = idx&255, B = idx>>3 (NOT lo/hi — see seg_xform.s)
-;   +2/+3  v2 key (same encoding)
-;   +4     back-face form: 0-3 = axis compare (px>C, px<C, py>C, py<C),
-;          >= 4 = diagonal, (form-4) indexes the DIR tables
-;   +5/+6  axis: C16 compare constant | diagonal: lv1x s16
-;   +7     diagonal: lv1y lo (hi is at +9 — split around flags)
-;   +8     flags (see below)
-;   +9     axis: unused pad | diagonal: lv1y hi
-;   +10..15 heights, baked by the packer: fh, ch, then per-form:
-;          solid+APEDGE: bfh|apv1_ch, bch|apv1_fh, apv2_ch, apv2_fh
-;          portal:       bfh, bch (back floor/ceiling), rest unused
-; Flags: $80 SAMEDIR (folded into the DIR sign at PACK time — the test
-; itself never reads it), $02 SOLID, $04 NEEDBT (back ceil below front),
-; $08 NEEDBB (back floor above front), $10/$20 NOVT1/2 (suppress endpoint
-; vertical), $40/$01 APEDGE1/2 (aperture edge at that end).
-; Stage ONLY flags (reused all over the seg loop AND across the DCL emit
-; calls that clobber registers — it must live in ZP). Everything else is
-; read ON DEMAND via (zp_seg_hdr_p),Y — the persistent cursor is already
-; a ZP pointer, so no copy into zp_br_p is needed (2026-07-09).
-   LDY #LAY_SH_FLAGS
-   LDA (zp_seg_hdr_p),Y
-   STA zp_seg_flags
-
-; --- Back-face test: TAIL-DISPATCHED (2026-07-11). Single caller, so
-; the test JMPs straight to bf_seg_front / bf_seg_back instead of
-; returning a Z verdict — no JSR/RTS, no verdict LDA, no re-branch.
-   JMP back_face_test
+ss_empty:                                  ; empty subsector: nothing to draw
+   RTS                                     ; (sl_rts moved to backface.s with
+                                        ;  the seg loop; this is the empty
+                                        ;  test's own exit, on an island the
+                                        ;  code above never falls into)
+; (::s_advance_l0 and ::seg_proc MOVED to backface.s 2026-09-05, to sit
+;  immediately above back_face_test so the majority arc falls all the way
+;  through.  They are still this file's loop; the split is physical.)
 ; (bf_seg_back trampoline deleted 2026-07-12: back-exits in backface.s
 ; JMP ::s_advance directly — one hop, not two, per back-facing seg)
 
